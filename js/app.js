@@ -22,6 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const closeAddVideoModal = document.getElementById('closeAddVideoModal');
   const cancelAddVideoBtn = document.getElementById('cancelAddVideoBtn');
   const addVideoForm = document.getElementById('addVideoForm');
+  const submitAddVideoBtn = document.getElementById('submitAddVideoBtn');
   const videoFileInput = document.getElementById('videoFileInput');
   const videoFilePicker = document.getElementById('videoFilePicker');
   const filePickerPrompt = document.getElementById('filePickerPrompt');
@@ -97,7 +98,8 @@ document.addEventListener('DOMContentLoaded', () => {
       document.body.style.overflow = isOpen ? 'hidden' : '';
     });
 
-    navItems.forEach((link) => {
+    const allDrawerLinks = navLinks.querySelectorAll('a');
+    allDrawerLinks.forEach((link) => {
       link.addEventListener('click', () => {
         navLinks.classList.remove('mobile-open');
         mobileToggle.classList.remove('open');
@@ -309,10 +311,11 @@ document.addEventListener('DOMContentLoaded', () => {
     return card;
   }
 
-  function initPortfolioGrid() {
+  async function initPortfolioGrid() {
     if (!portfolioVideoGrid) return;
     portfolioVideoGrid.innerHTML = '';
 
+    // 1. Render the baseline 4 portfolio videos
     if (typeof PROJECTS_DATA !== 'undefined' && Array.isArray(PROJECTS_DATA)) {
       PROJECTS_DATA.forEach((proj, idx) => {
         const card = createRealProjectCard(proj, idx);
@@ -324,17 +327,38 @@ document.addEventListener('DOMContentLoaded', () => {
     if (portfolioEmptyState) {
       portfolioEmptyState.style.display = 'none';
     }
+
+    // 2. Fetch and render persistent videos from Supabase Cloud Database
+    if (window.ShacreatzSupabase && typeof window.ShacreatzSupabase.fetchVideos === 'function') {
+      try {
+        const persistentVideos = await window.ShacreatzSupabase.fetchVideos();
+        if (Array.isArray(persistentVideos) && persistentVideos.length > 0) {
+          persistentVideos.forEach((videoItem) => {
+            const card = createPersistentVideoCard(videoItem);
+            portfolioVideoGrid.appendChild(card);
+          });
+        }
+      } catch (err) {
+        console.warn('[Supabase] Could not load persistent videos on startup:', err);
+      }
+    }
   }
 
   initPortfolioGrid();
 
   /* --------------------------------------------------------------------------
-     6. USER-ADDED VIDEOS VIA "+ ADD VIDEO" MODAL
+     6. USER-ADDED VIDEOS VIA SUPABASE CLOUD STORAGE & DATABASE
      -------------------------------------------------------------------------- */
-  function createDynamicUserCard(videoItem) {
+  function createPersistentVideoCard(videoItem) {
     const card = document.createElement('article');
     card.className = 'portfolio-video-card';
     card.id = `userVideo-${videoItem.id}`;
+
+    const videoUrl = videoItem.video_url || videoItem.videoUrl;
+    const caption = videoItem.title || videoItem.caption || 'Uploaded Video';
+    const category = videoItem.category || 'Uploaded Video';
+    const mimeType = videoItem.mime_type || videoItem.mimeType || 'video/mp4';
+    const storagePath = videoItem.storage_path || videoItem.storagePath || '';
 
     const videoWrap = document.createElement('div');
     videoWrap.className = 'card-video-wrapper';
@@ -344,18 +368,18 @@ document.addEventListener('DOMContentLoaded', () => {
     video.controls = false;
     video.playsInline = true;
     video.preload = 'metadata';
-    video.src = videoItem.blobUrl;
+    video.src = videoUrl;
 
     const source = document.createElement('source');
-    source.src = videoItem.blobUrl;
-    source.type = videoItem.mimeType;
+    source.src = videoUrl;
+    source.type = mimeType;
     video.appendChild(source);
 
     // Play button overlay
     const playOverlay = document.createElement('div');
     playOverlay.className = 'card-play-overlay';
     playOverlay.setAttribute('role', 'button');
-    playOverlay.setAttribute('aria-label', `Play ${escapeHtml(videoItem.caption)}`);
+    playOverlay.setAttribute('aria-label', `Play ${escapeHtml(caption)}`);
     playOverlay.innerHTML = `
       <div class="card-play-btn-circle">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
@@ -368,7 +392,7 @@ document.addEventListener('DOMContentLoaded', () => {
       video.controls = true;
       video.play().then(() => {
         playOverlay.classList.add('hidden');
-      }).catch((e) => console.warn(e));
+      }).catch((e) => console.warn('Playback error:', e));
     });
 
     video.addEventListener('play', () => playOverlay.classList.add('hidden'));
@@ -380,8 +404,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'card-remove-btn';
-    removeBtn.title = 'Remove Video';
-    removeBtn.setAttribute('aria-label', `Remove video ${escapeHtml(videoItem.caption)}`);
+    removeBtn.title = 'Delete Video from Cloud';
+    removeBtn.setAttribute('aria-label', `Delete video ${escapeHtml(caption)}`);
     removeBtn.innerHTML = `
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
         <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -404,11 +428,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const captionEl = document.createElement('h3');
     captionEl.className = 'card-video-caption';
-    captionEl.textContent = videoItem.caption;
+    captionEl.textContent = caption;
 
     const categoryEl = document.createElement('span');
     categoryEl.className = 'card-video-category';
-    categoryEl.textContent = videoItem.category || 'Uploaded Video';
+    categoryEl.textContent = category;
 
     metaText.appendChild(captionEl);
     metaText.appendChild(categoryEl);
@@ -423,17 +447,22 @@ document.addEventListener('DOMContentLoaded', () => {
     card.appendChild(metaWrap);
 
     // Remove video action
-    removeBtn.addEventListener('click', (e) => {
+    removeBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
+      const confirmDelete = window.confirm(`Permanently delete "${caption}" from cloud storage and database?`);
+      if (!confirmDelete) return;
+
       video.pause();
       unregisterVideoPlayer(video);
 
-      try {
-        URL.revokeObjectURL(videoItem.blobUrl);
-      } catch (err) {}
-
-      const idx = userAddedVideos.findIndex((v) => v.id === videoItem.id);
-      if (idx !== -1) userAddedVideos.splice(idx, 1);
+      // Delete from Supabase cloud database & storage
+      if (window.ShacreatzSupabase && typeof window.ShacreatzSupabase.deleteVideo === 'function') {
+        try {
+          await window.ShacreatzSupabase.deleteVideo(videoItem.id, storagePath);
+        } catch (err) {
+          console.warn('[Supabase] Delete error:', err);
+        }
+      }
 
       card.remove();
 
@@ -613,9 +642,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Form Submit
+  // Form Submit with Supabase Cloud Storage & Database Persistence
   if (addVideoForm) {
-    addVideoForm.addEventListener('submit', (e) => {
+    addVideoForm.addEventListener('submit', async (e) => {
       e.preventDefault();
 
       let hasError = false;
@@ -648,34 +677,99 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (hasError) return;
 
-      const cardBlobUrl = URL.createObjectURL(file);
-      const mimeType = getNormalizedMimeType(file);
+      // Check if Supabase client is initialized
+      const isConfigured = window.ShacreatzSupabase && window.ShacreatzSupabase.isConfigured();
+      if (!isConfigured) {
+        // Prompt user for credentials if not yet set in .env or js/supabase-config.js
+        const promptCreds = window.confirm(
+          'Supabase Cloud Storage is not configured yet.\n\n' +
+          'Would you like to enter your Supabase URL & Anon Key now to enable permanent cloud storage?'
+        );
 
-      const videoItem = {
-        id: 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
-        blobUrl: cardBlobUrl,
-        fileName: file.name,
-        mimeType: mimeType,
-        caption: caption,
-        category: category
-      };
-
-      userAddedVideos.push(videoItem);
-
-      if (portfolioEmptyState) {
-        portfolioEmptyState.style.display = 'none';
+        if (promptCreds) {
+          const userUrl = window.prompt('Enter your Supabase Project URL (e.g. https://xyz.supabase.co):');
+          const userKey = window.prompt('Enter your Supabase Public Anon Key:');
+          if (userUrl && userKey) {
+            localStorage.setItem('shacreatz_supabase_url', userUrl.trim());
+            localStorage.setItem('shacreatz_supabase_anon_key', userKey.trim());
+            await window.ShacreatzSupabase.init();
+          } else {
+            return;
+          }
+        } else {
+          if (fileErrorMsg) {
+            fileErrorMsg.textContent = 'Permanent storage requires Supabase. Please set SUPABASE_URL and SUPABASE_ANON_KEY in Vercel or js/supabase-config.js.';
+            fileErrorMsg.style.display = 'block';
+          }
+          return;
+        }
       }
 
-      const card = createDynamicUserCard(videoItem);
-      if (portfolioVideoGrid) {
-        portfolioVideoGrid.appendChild(card);
+      // Show uploading state on button
+      if (submitAddVideoBtn) {
+        submitAddVideoBtn.disabled = true;
+        submitAddVideoBtn.innerHTML = `
+          <span>UPLOADING TO CLOUD...</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="spin-icon">
+            <line x1="12" y1="2" x2="12" y2="6"></line>
+            <line x1="12" y1="18" x2="12" y2="22"></line>
+            <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
+            <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+            <line x1="2" y1="12" x2="6" y2="12"></line>
+            <line x1="18" y1="12" x2="22" y2="12"></line>
+            <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
+            <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
+          </svg>
+        `;
       }
 
-      closeModal();
+      try {
+        // 1. Upload actual video file to Supabase Cloud Storage
+        const uploadResult = await window.ShacreatzSupabase.uploadVideo(file);
 
-      setTimeout(() => {
-        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 200);
+        // 2. Save video metadata to Supabase PostgreSQL Database
+        const dbRecord = await window.ShacreatzSupabase.saveMetadata({
+          title: caption,
+          category: category || 'Uploaded Video',
+          videoUrl: uploadResult.publicUrl,
+          fileName: file.name,
+          mimeType: getNormalizedMimeType(file),
+          fileSize: file.size,
+          storagePath: uploadResult.storagePath
+        });
+
+        if (portfolioEmptyState) {
+          portfolioEmptyState.style.display = 'none';
+        }
+
+        // 3. Immediately display the newly uploaded persistent video card
+        const card = createPersistentVideoCard(dbRecord);
+        if (portfolioVideoGrid) {
+          portfolioVideoGrid.appendChild(card);
+        }
+
+        closeModal();
+
+        setTimeout(() => {
+          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 200);
+      } catch (uploadErr) {
+        console.error('[Upload Failed]', uploadErr);
+        if (fileErrorMsg) {
+          fileErrorMsg.textContent = 'Upload error: ' + (uploadErr.message || 'Please check your Supabase credentials and RLS policies.');
+          fileErrorMsg.style.display = 'block';
+        }
+      } finally {
+        if (submitAddVideoBtn) {
+          submitAddVideoBtn.disabled = false;
+          submitAddVideoBtn.innerHTML = `
+            <span>ADD VIDEO</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          `;
+        }
+      }
     });
   }
 
