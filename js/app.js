@@ -1,7 +1,17 @@
 /**
  * =========================================================================
- * SHACREATZ - PORTFOLIO INTERACTIVE LOGIC & 4-CARD VIDEO CONTROLLER
+ * SHACREATZ - PORTFOLIO INTERACTIVE LOGIC & VIDEO CONTROLLER (V5.1)
  * =========================================================================
+ * - Direct file upload with Browse Files & Drag/Drop
+ * - Real-time upload progress indicator
+ * - Zero hardcoded/demo videos (guaranteed permanent purge)
+ * - HTML5 cross-platform video playback (Chrome, Edge, iOS, Android)
+ * - Fully Functional Three-Dot Menu:
+ *     1. Edit Video (Title, Category, Hashtags, Description -> Supabase)
+ *     2. Copy Video Link ("Link Copied Successfully")
+ *     3. Delete Video (Dedicated Confirmation Popup -> Permanent Supabase Storage & DB deletion)
+ * - Non-intrusive floating toast notifications
+ * - Responsive UI preserving Obsidian & Electric Cyan branding
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -25,12 +35,21 @@ document.addEventListener('DOMContentLoaded', () => {
   const submitAddVideoBtn = document.getElementById('submitAddVideoBtn');
   const videoFileInput = document.getElementById('videoFileInput');
   const videoFilePicker = document.getElementById('videoFilePicker');
+  const browseFilesBtn = document.getElementById('browseFilesBtn');
   const filePickerPrompt = document.getElementById('filePickerPrompt');
   const filePickerNote = document.getElementById('filePickerNote');
   const videoCaptionInput = document.getElementById('videoCaptionInput');
   const videoCategoryInput = document.getElementById('videoCategoryInput');
+  const videoTagsInput = document.getElementById('videoTagsInput');
+  const videoDescInput = document.getElementById('videoDescInput');
   const fileErrorMsg = document.getElementById('fileErrorMsg');
   const captionErrorMsg = document.getElementById('captionErrorMsg');
+
+  // Upload Progress Elements
+  const uploadProgressWrapper = document.getElementById('uploadProgressWrapper');
+  const uploadProgressLabel = document.getElementById('uploadProgressLabel');
+  const uploadProgressPct = document.getElementById('uploadProgressPct');
+  const uploadProgressFill = document.getElementById('uploadProgressFill');
 
   // Modal Video Live Preview Elements
   const videoPreviewWrapper = document.getElementById('videoPreviewWrapper');
@@ -39,6 +58,30 @@ document.addEventListener('DOMContentLoaded', () => {
   const videoErrorAlert = document.getElementById('videoErrorAlert');
   const videoErrorAlertText = document.getElementById('videoErrorAlertText');
 
+  // Edit Video Modal Elements
+  const editVideoModal = document.getElementById('editVideoModal');
+  const closeEditVideoModal = document.getElementById('closeEditVideoModal');
+  const cancelEditVideoBtn = document.getElementById('cancelEditVideoBtn');
+  const editVideoForm = document.getElementById('editVideoForm');
+  const editVideoId = document.getElementById('editVideoId');
+  const editVideoTitleInput = document.getElementById('editVideoTitleInput');
+  const editVideoCategoryInput = document.getElementById('editVideoCategoryInput');
+  const editVideoTagsInput = document.getElementById('editVideoTagsInput');
+  const editVideoDescInput = document.getElementById('editVideoDescInput');
+  const editTitleErrorMsg = document.getElementById('editTitleErrorMsg');
+  const saveEditVideoBtn = document.getElementById('saveEditVideoBtn');
+
+  // Delete Confirmation Modal Elements
+  const deleteConfirmModal = document.getElementById('deleteConfirmModal');
+  const closeDeleteVideoModal = document.getElementById('closeDeleteVideoModal');
+  const cancelDeleteVideoBtn = document.getElementById('cancelDeleteVideoBtn');
+  const confirmDeleteVideoBtn = document.getElementById('confirmDeleteVideoBtn');
+  const deleteTargetCaption = document.getElementById('deleteTargetCaption');
+  let pendingDeleteTarget = null;
+
+  // Toast Container
+  const toastContainer = document.getElementById('toastContainer');
+
   // Supported video formats
   const SUPPORTED_EXTENSIONS = ['mp4', 'webm', 'mov', 'm4v'];
   const SUPPORTED_MIME_PREFIXES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v'];
@@ -46,7 +89,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // In-memory state for user added videos & active player tracking
   let currentPreviewBlobUrl = null;
   let currentSelectedFile = null;
-  const userAddedVideos = [];
   const allActiveVideoElements = [];
 
   /* --------------------------------------------------------------------------
@@ -63,88 +105,106 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('scroll', handleScroll, { passive: true });
   handleScroll();
 
-  // ScrollSpy with IntersectionObserver
-  const sections = document.querySelectorAll('section[id], header[id]');
-  const observerOptions = {
-    root: null,
-    rootMargin: '-25% 0px -65% 0px',
-    threshold: 0
-  };
-
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (entry.isIntersecting) {
-        const id = entry.target.getAttribute('id');
-        navItems.forEach((link) => {
-          if (link.getAttribute('href') === `#${id}`) {
-            link.classList.add('active');
-          } else {
-            link.classList.remove('active');
-          }
-        });
-      }
-    });
-  }, observerOptions);
-
-  sections.forEach((sec) => observer.observe(sec));
-
   /* --------------------------------------------------------------------------
      2. MOBILE NAVIGATION DRAWER
      -------------------------------------------------------------------------- */
   if (mobileToggle && navLinks) {
-    mobileToggle.addEventListener('click', () => {
-      const isOpen = navLinks.classList.toggle('mobile-open');
-      mobileToggle.classList.toggle('open', isOpen);
-      document.body.style.overflow = isOpen ? 'hidden' : '';
+    mobileToggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = navLinks.classList.toggle('open');
+      mobileToggle.classList.toggle('active');
+      mobileToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
     });
 
-    const allDrawerLinks = navLinks.querySelectorAll('a');
-    allDrawerLinks.forEach((link) => {
+    navItems.forEach((link) => {
       link.addEventListener('click', () => {
-        navLinks.classList.remove('mobile-open');
-        mobileToggle.classList.remove('open');
-        document.body.style.overflow = '';
+        navLinks.classList.remove('open');
+        mobileToggle.classList.remove('active');
+        mobileToggle.setAttribute('aria-expanded', 'false');
       });
+    });
+
+    document.addEventListener('click', (e) => {
+      if (navLinks.classList.contains('open') && !navLinks.contains(e.target) && !mobileToggle.contains(e.target)) {
+        navLinks.classList.remove('open');
+        mobileToggle.classList.remove('active');
+        mobileToggle.setAttribute('aria-expanded', 'false');
+      }
     });
   }
 
   /* --------------------------------------------------------------------------
-     3. FORMAT & UTILITY FUNCTIONS
+     3. UTILITY FUNCTIONS & TOAST SYSTEM
      -------------------------------------------------------------------------- */
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text || '';
+    return div.innerHTML;
+  }
+
   function formatDuration(seconds) {
-    if (!seconds || isNaN(seconds) || !isFinite(seconds)) return '0:00';
+    if (!seconds || isNaN(seconds)) return '0:00';
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   }
 
-  function escapeHtml(str) {
-    if (!str) return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-  }
-
   function isValidVideoFile(file) {
     if (!file) return false;
-    const ext = file.name.split('.').pop().toLowerCase();
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    const type = file.type || '';
     const hasValidExt = SUPPORTED_EXTENSIONS.includes(ext);
-    const hasValidType = file.type ? (file.type.startsWith('video/') || SUPPORTED_MIME_PREFIXES.includes(file.type.toLowerCase())) : false;
-    return hasValidExt || hasValidType;
+    const hasValidMime = SUPPORTED_MIME_PREFIXES.some((prefix) => type.startsWith(prefix));
+    return hasValidExt || hasValidMime;
   }
 
   function getNormalizedMimeType(file) {
-    if (file && file.type && file.type.startsWith('video/')) {
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (file.type && file.type.startsWith('video/')) {
       return file.type;
     }
-    const ext = file ? file.name.split('.').pop().toLowerCase() : '';
     switch (ext) {
-      case 'mp4': return 'video/mp4';
       case 'webm': return 'video/webm';
       case 'mov': return 'video/quicktime';
+      case 'mp4': return 'video/mp4';
       case 'm4v': return 'video/x-m4v';
       default: return 'video/mp4';
     }
+  }
+
+  function showToast(message, type = 'info') {
+    if (!toastContainer) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast-msg toast-${type}`;
+
+    let iconSvg = '';
+    if (type === 'success') {
+      iconSvg = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+    } else if (type === 'error') {
+      iconSvg = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`;
+    } else {
+      iconSvg = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>`;
+    }
+
+    toast.innerHTML = `${iconSvg}<span>${escapeHtml(message)}</span>`;
+    toastContainer.appendChild(toast);
+
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(10px)';
+      toast.style.transition = 'all 0.22s ease';
+      setTimeout(() => toast.remove(), 240);
+    }, 3200);
+  }
+
+  function closeAllCardMenus() {
+    document.querySelectorAll('.card-dots-wrap.open').forEach((w) => {
+      w.classList.remove('open');
+    });
+    document.querySelectorAll('.portfolio-video-card.menu-active').forEach((c) => {
+      c.classList.remove('menu-active');
+    });
   }
 
   /* --------------------------------------------------------------------------
@@ -156,7 +216,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     videoEl.addEventListener('play', () => {
-      // Pause all other videos
       allActiveVideoElements.forEach((otherVideo) => {
         if (otherVideo !== videoEl && !otherVideo.paused) {
           otherVideo.pause();
@@ -173,200 +232,31 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /* --------------------------------------------------------------------------
-     5. RENDER THE INITIAL 4 REAL VIDEOS
-     -------------------------------------------------------------------------- */
-  function createRealProjectCard(project, index) {
-    const card = document.createElement('article');
-    card.className = 'portfolio-video-card';
-    card.id = `projectCard-${project.id}`;
-
-    // Saved caption from localStorage if edited
-    const savedCaption = localStorage.getItem(`shacreatz_caption_${project.id}`);
-    const displayCaption = savedCaption || project.title;
-
-    // Video Wrapper
-    const videoWrap = document.createElement('div');
-    videoWrap.className = 'card-video-wrapper';
-
-    // HTML5 Video Element
-    const video = document.createElement('video');
-    video.className = 'card-video-player';
-    video.controls = false;
-    video.playsInline = true;
-    video.preload = 'metadata';
-    if (project.thumbnail) {
-      video.poster = project.thumbnail;
-    }
-
-    // Primary source (H.264 MP4 for instant universal playback)
-    const sourcePrimary = document.createElement('source');
-    sourcePrimary.src = project.videoUrl;
-    sourcePrimary.type = project.mimeType || 'video/mp4';
-    video.appendChild(sourcePrimary);
-
-    // Fallback source (Original MOV if available)
-    if (project.fallbackUrl) {
-      const sourceFallback = document.createElement('source');
-      sourceFallback.src = project.fallbackUrl;
-      sourceFallback.type = 'video/quicktime';
-      video.appendChild(sourceFallback);
-    }
-
-    // Play button overlay
-    const playOverlay = document.createElement('div');
-    playOverlay.className = 'card-play-overlay';
-    playOverlay.setAttribute('role', 'button');
-    playOverlay.setAttribute('aria-label', `Play ${escapeHtml(displayCaption)}`);
-    playOverlay.innerHTML = `
-      <div class="card-play-btn-circle">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-          <polygon points="5 3 19 12 5 21 5 3"></polygon>
-        </svg>
-      </div>
-    `;
-
-    // Click play overlay -> enable controls, start video and hide overlay
-    playOverlay.addEventListener('click', () => {
-      video.controls = true;
-      video.play().then(() => {
-        playOverlay.classList.add('hidden');
-      }).catch((err) => {
-        console.warn('Playback error or user gesture required:', err);
-      });
-    });
-
-    video.addEventListener('play', () => {
-      playOverlay.classList.add('hidden');
-    });
-
-    video.addEventListener('pause', () => {
-      if (video.currentTime === 0 || video.ended) {
-        playOverlay.classList.remove('hidden');
-      }
-    });
-
-    video.addEventListener('ended', () => {
-      playOverlay.classList.remove('hidden');
-    });
-
-    // Register with single-video controller
-    registerVideoPlayer(video);
-
-    videoWrap.appendChild(video);
-    videoWrap.appendChild(playOverlay);
-
-    // Meta Section
-    const metaWrap = document.createElement('div');
-    metaWrap.className = 'card-video-meta';
-
-    const metaText = document.createElement('div');
-    metaText.className = 'card-meta-text';
-
-    // Caption Element
-    const captionEl = document.createElement('h3');
-    captionEl.className = 'card-video-caption';
-
-    if (project.isEditable) {
-      captionEl.classList.add('editable-caption');
-      captionEl.contentEditable = 'true';
-      captionEl.title = 'Click to edit title';
-      captionEl.textContent = displayCaption;
-
-      // Save to localStorage on blur
-      captionEl.addEventListener('blur', () => {
-        const text = captionEl.textContent.trim();
-        if (text) {
-          localStorage.setItem(`shacreatz_caption_${project.id}`, text);
-        } else {
-          captionEl.textContent = project.title;
-        }
-      });
-
-      captionEl.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          captionEl.blur();
-        }
-      });
-    } else {
-      captionEl.textContent = displayCaption;
-    }
-
-    const categoryEl = document.createElement('span');
-    categoryEl.className = 'card-video-category';
-    categoryEl.textContent = project.category || 'Cinematic Edit';
-
-    metaText.appendChild(captionEl);
-    metaText.appendChild(categoryEl);
-    metaWrap.appendChild(metaText);
-
-    const dotsBtn = document.createElement('div');
-    dotsBtn.className = 'card-dots-btn';
-    dotsBtn.textContent = '⋮';
-    metaWrap.appendChild(dotsBtn);
-
-    card.appendChild(videoWrap);
-    card.appendChild(metaWrap);
-
-    return card;
-  }
-
-  async function initPortfolioGrid() {
-    if (!portfolioVideoGrid) return;
-    portfolioVideoGrid.innerHTML = '';
-
-    // 1. Render the baseline 4 portfolio videos
-    if (typeof PROJECTS_DATA !== 'undefined' && Array.isArray(PROJECTS_DATA)) {
-      PROJECTS_DATA.forEach((proj, idx) => {
-        const card = createRealProjectCard(proj, idx);
-        portfolioVideoGrid.appendChild(card);
-      });
-    }
-
-    // Hide empty state
-    if (portfolioEmptyState) {
-      portfolioEmptyState.style.display = 'none';
-    }
-
-    // 2. Fetch and render persistent videos from Supabase Cloud Database
-    if (window.ShacreatzSupabase && typeof window.ShacreatzSupabase.fetchVideos === 'function') {
-      try {
-        const persistentVideos = await window.ShacreatzSupabase.fetchVideos();
-        if (Array.isArray(persistentVideos) && persistentVideos.length > 0) {
-          persistentVideos.forEach((videoItem) => {
-            const card = createPersistentVideoCard(videoItem);
-            portfolioVideoGrid.appendChild(card);
-          });
-        }
-      } catch (err) {
-        console.warn('[Supabase] Could not load persistent videos on startup:', err);
-      }
-    }
-  }
-
-  initPortfolioGrid();
-
-  /* --------------------------------------------------------------------------
-     6. USER-ADDED VIDEOS VIA SUPABASE CLOUD STORAGE & DATABASE
+     5. PERSISTENT VIDEO CARD GENERATOR & THREE-DOT MENU
      -------------------------------------------------------------------------- */
   function createPersistentVideoCard(videoItem) {
     const card = document.createElement('article');
     card.className = 'portfolio-video-card';
-    card.id = `userVideo-${videoItem.id}`;
+    card.id = `videoCard-${videoItem.id}`;
+    card.setAttribute('data-id', videoItem.id);
 
     const videoUrl = videoItem.video_url || videoItem.videoUrl;
-    const caption = videoItem.title || videoItem.caption || 'Uploaded Video';
-    const category = videoItem.category || 'Uploaded Video';
+    let caption = videoItem.title || videoItem.caption || 'Uploaded Video';
+    let category = videoItem.category || '';
+    let tags = videoItem.tags || videoItem.hashtags || '';
+    let description = videoItem.description || '';
     const mimeType = videoItem.mime_type || videoItem.mimeType || 'video/mp4';
     const storagePath = videoItem.storage_path || videoItem.storagePath || '';
 
     const videoWrap = document.createElement('div');
     videoWrap.className = 'card-video-wrapper';
 
+    // HTML5 Video Player
     const video = document.createElement('video');
     video.className = 'card-video-player';
     video.controls = false;
     video.playsInline = true;
+    video.setAttribute('webkit-playsinline', 'true');
     video.preload = 'metadata';
     video.src = videoUrl;
 
@@ -388,38 +278,56 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
     `;
 
-    playOverlay.addEventListener('click', () => {
+    // Robust Play / Pause handling
+    playOverlay.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeAllCardMenus();
       video.controls = true;
       video.play().then(() => {
         playOverlay.classList.add('hidden');
-      }).catch((e) => console.warn('Playback error:', e));
+      }).catch((err) => {
+        console.warn('[Video Playback Failed]', err);
+        showVideoErrorBadge('Video playback unavailable on this browser or URL inaccessible.');
+      });
     });
 
-    video.addEventListener('play', () => playOverlay.classList.add('hidden'));
+    video.addEventListener('play', () => {
+      playOverlay.classList.add('hidden');
+    });
+
     video.addEventListener('pause', () => {
-      if (video.currentTime === 0 || video.ended) playOverlay.classList.remove('hidden');
+      if (video.currentTime === 0 || video.ended) {
+        playOverlay.classList.remove('hidden');
+      }
     });
 
-    // Remove button
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.className = 'card-remove-btn';
-    removeBtn.title = 'Delete Video from Cloud';
-    removeBtn.setAttribute('aria-label', `Delete video ${escapeHtml(caption)}`);
-    removeBtn.innerHTML = `
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-        <line x1="18" y1="6" x2="6" y2="18"></line>
-        <line x1="6" y1="6" x2="18" y2="18"></line>
-      </svg>
-    `;
+    video.addEventListener('error', () => {
+      console.warn('[Video Load Error] URL:', videoUrl);
+      showVideoErrorBadge('Video URL is invalid or inaccessible.');
+    });
+
+    function showVideoErrorBadge(errorText) {
+      if (videoWrap.querySelector('.card-video-error-badge')) return;
+      const badge = document.createElement('div');
+      badge.className = 'card-video-error-badge';
+      badge.innerHTML = `
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <span>${escapeHtml(errorText)}</span>
+      `;
+      videoWrap.appendChild(badge);
+      playOverlay.classList.add('hidden');
+    }
 
     registerVideoPlayer(video);
 
     videoWrap.appendChild(video);
     videoWrap.appendChild(playOverlay);
-    videoWrap.appendChild(removeBtn);
 
-    // Meta Section
+    // Card Meta Section
     const metaWrap = document.createElement('div');
     metaWrap.className = 'card-video-meta';
 
@@ -429,56 +337,292 @@ document.addEventListener('DOMContentLoaded', () => {
     const captionEl = document.createElement('h3');
     captionEl.className = 'card-video-caption';
     captionEl.textContent = caption;
+    metaText.appendChild(captionEl);
+
+    // Sub-row with category and tags
+    const subRow = document.createElement('div');
+    subRow.className = 'card-meta-subrow';
 
     const categoryEl = document.createElement('span');
     categoryEl.className = 'card-video-category';
     categoryEl.textContent = category;
+    categoryEl.style.display = category ? 'inline-block' : 'none';
+    subRow.appendChild(categoryEl);
 
-    metaText.appendChild(captionEl);
-    metaText.appendChild(categoryEl);
+    const tagsEl = document.createElement('span');
+    tagsEl.className = 'card-video-tags';
+    tagsEl.textContent = tags;
+    tagsEl.style.display = tags ? 'inline-block' : 'none';
+    subRow.appendChild(tagsEl);
+
+    metaText.appendChild(subRow);
+
+    // Description
+    const descEl = document.createElement('p');
+    descEl.className = 'card-video-desc';
+    descEl.textContent = description;
+    descEl.style.display = description ? '-webkit-box' : 'none';
+    metaText.appendChild(descEl);
+
     metaWrap.appendChild(metaText);
 
-    const dotsBtn = document.createElement('div');
+    // =========================================================================
+    // THREE-DOT MENU COMPONENT
+    // =========================================================================
+    const dotsWrap = document.createElement('div');
+    dotsWrap.className = 'card-dots-wrap';
+
+    const dotsBtn = document.createElement('button');
+    dotsBtn.type = 'button';
     dotsBtn.className = 'card-dots-btn';
+    dotsBtn.setAttribute('data-action', 'toggle-menu');
+    dotsBtn.setAttribute('aria-label', `Options for ${caption}`);
+    dotsBtn.setAttribute('aria-haspopup', 'true');
     dotsBtn.textContent = '⋮';
-    metaWrap.appendChild(dotsBtn);
+
+    const dropdownMenu = document.createElement('div');
+    dropdownMenu.className = 'card-dropdown-menu';
+    dropdownMenu.setAttribute('role', 'menu');
+
+    // 1. Edit Video Action
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'dropdown-item edit-action';
+    editBtn.setAttribute('data-action', 'edit-video');
+    editBtn.innerHTML = `
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+      </svg>
+      <span>Edit Video</span>
+    `;
+
+    // 2. Copy Video Link Action
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'dropdown-item copy-action';
+    copyBtn.setAttribute('data-action', 'copy-video');
+    copyBtn.innerHTML = `
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+      </svg>
+      <span>Copy Video Link</span>
+    `;
+
+    // Divider
+    const divider = document.createElement('div');
+    divider.className = 'dropdown-divider';
+
+    // 3. Delete Video Action
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'dropdown-item dropdown-item-danger delete-action';
+    deleteBtn.setAttribute('data-action', 'delete-video');
+    deleteBtn.innerHTML = `
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="3 6 5 6 21 6"></polyline>
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+      </svg>
+      <span>Delete Video</span>
+    `;
+
+    dropdownMenu.appendChild(editBtn);
+    dropdownMenu.appendChild(copyBtn);
+    dropdownMenu.appendChild(divider);
+    dropdownMenu.appendChild(deleteBtn);
+
+    dotsWrap.appendChild(dotsBtn);
+    dotsWrap.appendChild(dropdownMenu);
+    metaWrap.appendChild(dotsWrap);
 
     card.appendChild(videoWrap);
     card.appendChild(metaWrap);
 
-    // Remove video action
-    removeBtn.addEventListener('click', async (e) => {
+    // --- Toggle Dropdown Handler ---
+    dotsBtn.addEventListener('click', (e) => {
+      e.preventDefault();
       e.stopPropagation();
-      const confirmDelete = window.confirm(`Permanently delete "${caption}" from cloud storage and database?`);
-      if (!confirmDelete) return;
 
-      video.pause();
-      unregisterVideoPlayer(video);
+      const isOpen = dotsWrap.classList.contains('open');
+      closeAllCardMenus();
 
-      // Delete from Supabase cloud database & storage
-      if (window.ShacreatzSupabase && typeof window.ShacreatzSupabase.deleteVideo === 'function') {
+      if (!isOpen) {
+        dotsWrap.classList.add('open');
+        card.classList.add('menu-active');
+      }
+    });
+
+    // --- Action: Copy Video Link ---
+    copyBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeAllCardMenus();
+
+      if (!videoUrl) {
+        showToast('Video URL is unavailable.', 'error');
+        return;
+      }
+
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(videoUrl);
+        } else {
+          const tempInput = document.createElement('textarea');
+          tempInput.value = videoUrl;
+          tempInput.style.position = 'fixed';
+          tempInput.style.opacity = '0';
+          document.body.appendChild(tempInput);
+          tempInput.focus();
+          tempInput.select();
+          document.execCommand('copy');
+          document.body.removeChild(tempInput);
+        }
+        showToast('Link Copied Successfully', 'success');
+      } catch (copyErr) {
+        console.warn('Clipboard copy error:', copyErr);
         try {
-          await window.ShacreatzSupabase.deleteVideo(videoItem.id, storagePath);
-        } catch (err) {
-          console.warn('[Supabase] Delete error:', err);
+          const tempInput = document.createElement('textarea');
+          tempInput.value = videoUrl;
+          tempInput.style.position = 'fixed';
+          tempInput.style.opacity = '0';
+          document.body.appendChild(tempInput);
+          tempInput.focus();
+          tempInput.select();
+          document.execCommand('copy');
+          document.body.removeChild(tempInput);
+          showToast('Link Copied Successfully', 'success');
+        } catch (e2) {
+          showToast('Failed to copy video link.', 'error');
         }
       }
+    });
 
-      card.remove();
+    // --- Action: Edit Video ---
+    editBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeAllCardMenus();
 
-      if (portfolioVideoGrid && portfolioVideoGrid.children.length === 0 && portfolioEmptyState) {
-        portfolioEmptyState.style.display = 'flex';
-      }
+      if (editVideoId) editVideoId.value = videoItem.id;
+      if (editVideoTitleInput) editVideoTitleInput.value = caption;
+      if (editVideoCategoryInput) editVideoCategoryInput.value = category;
+      if (editVideoTagsInput) editVideoTagsInput.value = tags;
+      if (editVideoDescInput) editVideoDescInput.value = description;
+      if (editTitleErrorMsg) editTitleErrorMsg.style.display = 'none';
+
+      openEditModal();
+
+      // Bind dynamic update closure to card elements
+      card._updateMeta = (newTitle, newCategory, newTags, newDesc) => {
+        caption = newTitle;
+        category = newCategory;
+        tags = newTags;
+        description = newDesc;
+
+        captionEl.textContent = newTitle;
+        categoryEl.textContent = newCategory;
+        categoryEl.style.display = newCategory ? 'inline-block' : 'none';
+        tagsEl.textContent = newTags;
+        tagsEl.style.display = newTags ? 'inline-block' : 'none';
+        descEl.textContent = newDesc;
+        descEl.style.display = newDesc ? '-webkit-box' : 'none';
+      };
+    });
+
+    // --- Action: Delete Video (Open Confirmation Popup) ---
+    deleteBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeAllCardMenus();
+
+      openDeleteModal({
+        videoId: videoItem.id,
+        storagePath: storagePath,
+        caption: caption,
+        card: card,
+        video: video
+      });
     });
 
     return card;
   }
 
+  // Event Delegation fallback on portfolioVideoGrid
+  if (portfolioVideoGrid) {
+    portfolioVideoGrid.addEventListener('click', (e) => {
+      const dotsBtnEl = e.target.closest('.card-dots-btn');
+      if (dotsBtnEl) {
+        e.preventDefault();
+        e.stopPropagation();
+        const wrap = dotsBtnEl.closest('.card-dots-wrap');
+        const card = dotsBtnEl.closest('.portfolio-video-card');
+        if (!wrap || !card) return;
+
+        const isOpen = wrap.classList.contains('open');
+        closeAllCardMenus();
+        if (!isOpen) {
+          wrap.classList.add('open');
+          card.classList.add('menu-active');
+        }
+      }
+    });
+  }
+
+  // Global click outside closes any open three-dot menu
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.card-dots-wrap')) {
+      closeAllCardMenus();
+    }
+  });
+
   /* --------------------------------------------------------------------------
-     7. MODAL CONTROLS & FILE SELECTION
+     6. PORTFOLIO GALLERY INITIALIZATION (ZERO DEMO VIDEOS)
+     -------------------------------------------------------------------------- */
+  async function initPortfolioGrid() {
+    if (!portfolioVideoGrid) return;
+    portfolioVideoGrid.innerHTML = '';
+
+    // Show empty state while loading
+    if (portfolioEmptyState) {
+      portfolioEmptyState.style.display = 'flex';
+    }
+
+    // Fetch all persistent genuine videos from Supabase Cloud Database (or local persistence mirror)
+    if (window.ShacreatzSupabase && typeof window.ShacreatzSupabase.fetchVideos === 'function') {
+      try {
+        const persistentVideos = await window.ShacreatzSupabase.fetchVideos();
+        if (Array.isArray(persistentVideos) && persistentVideos.length > 0) {
+          if (portfolioEmptyState) {
+            portfolioEmptyState.style.display = 'none';
+          }
+          persistentVideos.forEach((videoItem) => {
+            const card = createPersistentVideoCard(videoItem);
+            portfolioVideoGrid.appendChild(card);
+          });
+        } else {
+          // Zero videos uploaded yet
+          if (portfolioEmptyState) {
+            portfolioEmptyState.style.display = 'flex';
+          }
+        }
+      } catch (err) {
+        console.warn('[Supabase] Could not load persistent videos on startup:', err);
+        if (portfolioEmptyState) {
+          portfolioEmptyState.style.display = 'flex';
+        }
+      }
+    }
+  }
+
+  initPortfolioGrid();
+
+  /* --------------------------------------------------------------------------
+     7. ADD VIDEO MODAL CONTROLS & BROWSE FILES
      -------------------------------------------------------------------------- */
   function openModal() {
     if (!addVideoModal) return;
+    closeAllCardMenus();
     addVideoModal.classList.add('open');
     addVideoModal.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
@@ -515,12 +659,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (videoPreviewWrapper) videoPreviewWrapper.style.display = 'none';
+    if (uploadProgressWrapper) uploadProgressWrapper.style.display = 'none';
     if (videoErrorAlert) videoErrorAlert.style.display = 'none';
     if (filePickerPrompt) filePickerPrompt.textContent = 'Click or drag & drop video here';
     if (filePickerNote) filePickerNote.textContent = 'Supports MP4, WebM, MOV, M4V';
     if (fileErrorMsg) fileErrorMsg.style.display = 'none';
     if (captionErrorMsg) captionErrorMsg.style.display = 'none';
     if (videoFilePicker) videoFilePicker.classList.remove('has-file', 'dragover');
+    if (videoCategoryInput) videoCategoryInput.value = '';
+    if (videoTagsInput) videoTagsInput.value = '';
+    if (videoDescInput) videoDescInput.value = '';
   }
 
   function handleFileSelected(file) {
@@ -580,12 +728,21 @@ document.addEventListener('DOMContentLoaded', () => {
       modalVideoPreview.onerror = () => {
         if (videoErrorAlert) {
           videoErrorAlert.style.display = 'flex';
-          if (videoErrorAlertText) videoErrorAlertText.textContent = 'Preview error: Browser cannot decode this codec.';
+          if (videoErrorAlertText) videoErrorAlertText.textContent = 'Preview notice: Browser format codec decoder unavailable.';
         }
       };
 
       modalVideoPreview.load();
     }
+  }
+
+  // Browse Files button directly triggers file input
+  if (browseFilesBtn && videoFileInput) {
+    browseFilesBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      videoFileInput.click();
+    });
   }
 
   // File Input Events
@@ -598,6 +755,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Drag & drop support
   if (videoFilePicker) {
+    videoFilePicker.addEventListener('click', (e) => {
+      if (e.target !== browseFilesBtn && !browseFilesBtn.contains(e.target)) {
+        if (videoFileInput) videoFileInput.click();
+      }
+    });
+
     ['dragenter', 'dragover'].forEach((eventName) => {
       videoFilePicker.addEventListener(eventName, (e) => {
         e.preventDefault();
@@ -636,13 +799,208 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  /* --------------------------------------------------------------------------
+     8. EDIT VIDEO MODAL CONTROLS
+     -------------------------------------------------------------------------- */
+  function openEditModal() {
+    if (!editVideoModal) return;
+    closeAllCardMenus();
+    editVideoModal.classList.add('open');
+    editVideoModal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+    setTimeout(() => {
+      if (editVideoTitleInput) editVideoTitleInput.focus();
+    }, 100);
+  }
+
+  function closeEditModal() {
+    if (!editVideoModal) return;
+    editVideoModal.classList.remove('open');
+    editVideoModal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+  }
+
+  if (closeEditVideoModal) closeEditVideoModal.addEventListener('click', closeEditModal);
+  if (cancelEditVideoBtn) cancelEditVideoBtn.addEventListener('click', closeEditModal);
+
+  if (editVideoModal) {
+    editVideoModal.addEventListener('click', (e) => {
+      if (e.target === editVideoModal) closeEditModal();
+    });
+  }
+
+  if (editVideoForm) {
+    editVideoForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const videoId = editVideoId ? editVideoId.value : '';
+      const newTitle = editVideoTitleInput ? editVideoTitleInput.value.trim() : '';
+      const newCategory = editVideoCategoryInput ? editVideoCategoryInput.value.trim() : '';
+      const newTags = editVideoTagsInput ? editVideoTagsInput.value.trim() : '';
+      const newDesc = editVideoDescInput ? editVideoDescInput.value.trim() : '';
+
+      if (!newTitle) {
+        if (editTitleErrorMsg) editTitleErrorMsg.style.display = 'block';
+        return;
+      }
+      if (editTitleErrorMsg) editTitleErrorMsg.style.display = 'none';
+
+      if (saveEditVideoBtn) {
+        saveEditVideoBtn.disabled = true;
+        saveEditVideoBtn.innerHTML = `<span>SAVING...</span>`;
+      }
+
+      try {
+        if (window.ShacreatzSupabase && typeof window.ShacreatzSupabase.updateMetadata === 'function') {
+          await window.ShacreatzSupabase.updateMetadata(videoId, {
+            title: newTitle,
+            category: newCategory,
+            tags: newTags,
+            description: newDesc
+          });
+        }
+
+        // Refresh card content automatically in DOM
+        const targetCard = document.getElementById(`videoCard-${videoId}`);
+        if (targetCard) {
+          if (typeof targetCard._updateMeta === 'function') {
+            targetCard._updateMeta(newTitle, newCategory, newTags, newDesc);
+          } else {
+            const capEl = targetCard.querySelector('.card-video-caption');
+            const catEl = targetCard.querySelector('.card-video-category');
+            const tagEl = targetCard.querySelector('.card-video-tags');
+            const desEl = targetCard.querySelector('.card-video-desc');
+
+            if (capEl) capEl.textContent = newTitle;
+            if (catEl) {
+              catEl.textContent = newCategory;
+              catEl.style.display = newCategory ? 'inline-block' : 'none';
+            }
+            if (tagEl) {
+              tagEl.textContent = newTags;
+              tagEl.style.display = newTags ? 'inline-block' : 'none';
+            }
+            if (desEl) {
+              desEl.textContent = newDesc;
+              desEl.style.display = newDesc ? '-webkit-box' : 'none';
+            }
+          }
+        }
+
+        closeEditModal();
+        showToast('Video details updated successfully!', 'success');
+      } catch (err) {
+        console.error('[Update Video Error]', err);
+        showToast('Failed to update video details.', 'error');
+      } finally {
+        if (saveEditVideoBtn) {
+          saveEditVideoBtn.disabled = false;
+          saveEditVideoBtn.innerHTML = `
+            <span>SAVE CHANGES</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          `;
+        }
+      }
+    });
+  }
+
+  /* --------------------------------------------------------------------------
+     9. DELETE CONFIRMATION MODAL CONTROLS
+     -------------------------------------------------------------------------- */
+  function openDeleteModal(target) {
+    if (!deleteConfirmModal) return;
+    closeAllCardMenus();
+    pendingDeleteTarget = target;
+    if (deleteTargetCaption) {
+      deleteTargetCaption.textContent = `"${target.caption}"`;
+    }
+    deleteConfirmModal.classList.add('open');
+    deleteConfirmModal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeDeleteModal() {
+    if (!deleteConfirmModal) return;
+    deleteConfirmModal.classList.remove('open');
+    deleteConfirmModal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+    pendingDeleteTarget = null;
+  }
+
+  if (closeDeleteVideoModal) closeDeleteVideoModal.addEventListener('click', closeDeleteModal);
+  if (cancelDeleteVideoBtn) cancelDeleteVideoBtn.addEventListener('click', closeDeleteModal);
+
+  if (deleteConfirmModal) {
+    deleteConfirmModal.addEventListener('click', (e) => {
+      if (e.target === deleteConfirmModal) closeDeleteModal();
+    });
+  }
+
+  if (confirmDeleteVideoBtn) {
+    confirmDeleteVideoBtn.addEventListener('click', async () => {
+      if (!pendingDeleteTarget) return;
+
+      const { videoId, storagePath, card, video } = pendingDeleteTarget;
+
+      confirmDeleteVideoBtn.disabled = true;
+      confirmDeleteVideoBtn.innerHTML = `<span>Deleting...</span>`;
+
+      try {
+        if (video) {
+          video.pause();
+          unregisterVideoPlayer(video);
+        }
+
+        // Delete from Supabase Storage & Database
+        if (window.ShacreatzSupabase && typeof window.ShacreatzSupabase.deleteVideo === 'function') {
+          await window.ShacreatzSupabase.deleteVideo(videoId, storagePath);
+        }
+
+        // Remove card from gallery only after successful deletion
+        if (card) {
+          card.style.opacity = '0';
+          card.style.transform = 'scale(0.95)';
+          card.style.transition = 'all 0.25s ease';
+          setTimeout(() => {
+            card.remove();
+            if (portfolioVideoGrid && portfolioVideoGrid.children.length === 0 && portfolioEmptyState) {
+              portfolioEmptyState.style.display = 'flex';
+            }
+          }, 260);
+        }
+
+        closeDeleteModal();
+        showToast('Video permanently deleted.', 'success');
+      } catch (err) {
+        console.error('[Delete Video Error]', err);
+        showToast('Failed to delete video. Please check your connection.', 'error');
+      } finally {
+        confirmDeleteVideoBtn.disabled = false;
+        confirmDeleteVideoBtn.innerHTML = `
+          <span>Confirm Delete</span>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+        `;
+      }
+    });
+  }
+
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && addVideoModal && addVideoModal.classList.contains('open')) {
-      closeModal();
+    if (e.key === 'Escape') {
+      closeAllCardMenus();
+      if (addVideoModal && addVideoModal.classList.contains('open')) closeModal();
+      if (editVideoModal && editVideoModal.classList.contains('open')) closeEditModal();
+      if (deleteConfirmModal && deleteConfirmModal.classList.contains('open')) closeDeleteModal();
     }
   });
 
-  // Form Submit with Supabase Cloud Storage & Database Persistence
+  /* --------------------------------------------------------------------------
+     10. FORM SUBMISSION (DIRECT FILE UPLOAD TO SUPABASE & NO LOCALHOST PROMPT)
+     -------------------------------------------------------------------------- */
   if (addVideoForm) {
     addVideoForm.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -651,6 +1009,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const file = currentSelectedFile || (videoFileInput.files && videoFileInput.files[0]);
       const caption = videoCaptionInput ? videoCaptionInput.value.trim() : '';
       const category = videoCategoryInput ? videoCategoryInput.value.trim() : '';
+      const tags = videoTagsInput ? videoTagsInput.value.trim() : '';
+      const description = videoDescInput ? videoDescInput.value.trim() : '';
 
       if (!file) {
         if (fileErrorMsg) {
@@ -677,39 +1037,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (hasError) return;
 
-      // Check if Supabase client is initialized
-      const isConfigured = window.ShacreatzSupabase && window.ShacreatzSupabase.isConfigured();
-      if (!isConfigured) {
-        // Prompt user for credentials if not yet set in .env or js/supabase-config.js
-        const promptCreds = window.confirm(
-          'Supabase Cloud Storage is not configured yet.\n\n' +
-          'Would you like to enter your Supabase URL & Anon Key now to enable permanent cloud storage?'
-        );
-
-        if (promptCreds) {
-          const userUrl = window.prompt('Enter your Supabase Project URL (e.g. https://xyz.supabase.co):');
-          const userKey = window.prompt('Enter your Supabase Public Anon Key:');
-          if (userUrl && userKey) {
-            localStorage.setItem('shacreatz_supabase_url', userUrl.trim());
-            localStorage.setItem('shacreatz_supabase_anon_key', userKey.trim());
-            await window.ShacreatzSupabase.init();
-          } else {
-            return;
-          }
-        } else {
-          if (fileErrorMsg) {
-            fileErrorMsg.textContent = 'Permanent storage requires Supabase. Please set SUPABASE_URL and SUPABASE_ANON_KEY in Vercel or js/supabase-config.js.';
-            fileErrorMsg.style.display = 'block';
-          }
-          return;
-        }
-      }
-
-      // Show uploading state on button
+      // Show uploading state on button & progress bar
       if (submitAddVideoBtn) {
         submitAddVideoBtn.disabled = true;
         submitAddVideoBtn.innerHTML = `
-          <span>UPLOADING TO CLOUD...</span>
+          <span>UPLOADING VIDEO...</span>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="spin-icon">
             <line x1="12" y1="2" x2="12" y2="6"></line>
             <line x1="12" y1="18" x2="12" y2="22"></line>
@@ -723,32 +1055,48 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
       }
 
+      if (uploadProgressWrapper) {
+        uploadProgressWrapper.style.display = 'block';
+        if (uploadProgressFill) uploadProgressFill.style.width = '10%';
+        if (uploadProgressPct) uploadProgressPct.textContent = '10%';
+        if (uploadProgressLabel) uploadProgressLabel.textContent = 'Uploading to cloud storage...';
+      }
+
       try {
-        // 1. Upload actual video file to Supabase Cloud Storage
-        const uploadResult = await window.ShacreatzSupabase.uploadVideo(file);
+        // 1. Upload video file to Supabase Cloud Storage
+        const uploadResult = await window.ShacreatzSupabase.uploadVideo(file, (pct, msg) => {
+          if (uploadProgressFill) uploadProgressFill.style.width = `${pct}%`;
+          if (uploadProgressPct) uploadProgressPct.textContent = `${pct}%`;
+          if (uploadProgressLabel && msg) uploadProgressLabel.textContent = msg;
+        });
 
         // 2. Save video metadata to Supabase PostgreSQL Database
         const dbRecord = await window.ShacreatzSupabase.saveMetadata({
           title: caption,
           category: category || 'Uploaded Video',
+          tags: tags,
+          description: description,
           videoUrl: uploadResult.publicUrl,
           fileName: file.name,
           mimeType: getNormalizedMimeType(file),
           fileSize: file.size,
-          storagePath: uploadResult.storagePath
+          storagePath: uploadResult.storagePath,
+          isLocalBlob: uploadResult.isLocalBlob,
+          fileBlob: uploadResult.fileBlob
         });
 
         if (portfolioEmptyState) {
           portfolioEmptyState.style.display = 'none';
         }
 
-        // 3. Immediately display the newly uploaded persistent video card
+        // 3. Immediately display the newly uploaded persistent video card in gallery
         const card = createPersistentVideoCard(dbRecord);
         if (portfolioVideoGrid) {
           portfolioVideoGrid.appendChild(card);
         }
 
         closeModal();
+        showToast('Video uploaded and published successfully!', 'success');
 
         setTimeout(() => {
           card.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -756,10 +1104,16 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (uploadErr) {
         console.error('[Upload Failed]', uploadErr);
         if (fileErrorMsg) {
-          fileErrorMsg.textContent = 'Upload error: ' + (uploadErr.message || 'Please check your Supabase credentials and RLS policies.');
+          fileErrorMsg.textContent = 'Upload error: ' + (uploadErr.message || 'Please check your connection.');
           fileErrorMsg.style.display = 'block';
         }
+        showToast('Upload failed: ' + (uploadErr.message || 'Error occurred'), 'error');
       } finally {
+        if (uploadProgressWrapper) {
+          setTimeout(() => {
+            uploadProgressWrapper.style.display = 'none';
+          }, 800);
+        }
         if (submitAddVideoBtn) {
           submitAddVideoBtn.disabled = false;
           submitAddVideoBtn.innerHTML = `
@@ -782,8 +1136,16 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  if (editVideoTitleInput) {
+    editVideoTitleInput.addEventListener('input', () => {
+      if (editVideoTitleInput.value.trim() && editTitleErrorMsg) {
+        editTitleErrorMsg.style.display = 'none';
+      }
+    });
+  }
+
   /* --------------------------------------------------------------------------
-     8. CLEANUP ON UNLOAD
+     11. CLEANUP ON UNLOAD
      -------------------------------------------------------------------------- */
   window.addEventListener('beforeunload', () => {
     if (currentPreviewBlobUrl) {
@@ -791,13 +1153,5 @@ document.addEventListener('DOMContentLoaded', () => {
         URL.revokeObjectURL(currentPreviewBlobUrl);
       } catch (e) {}
     }
-
-    userAddedVideos.forEach((item) => {
-      if (item.blobUrl) {
-        try {
-          URL.revokeObjectURL(item.blobUrl);
-        } catch (e) {}
-      }
-    });
   });
 });
