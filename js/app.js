@@ -1,15 +1,13 @@
 /**
  * =========================================================================
- * SHACREATZ - PORTFOLIO INTERACTIVE LOGIC & VIDEO CONTROLLER (V5.1)
+ * SHACREATZ - PORTFOLIO INTERACTIVE LOGIC & VIDEO CONTROLLER (V5.4)
  * =========================================================================
- * - Direct file upload with Browse Files & Drag/Drop
- * - Real-time upload progress indicator
- * - Zero hardcoded/demo videos (guaranteed permanent purge)
- * - HTML5 cross-platform video playback (Chrome, Edge, iOS, Android)
- * - Fully Functional Three-Dot Menu:
- *     1. Edit Video (Title, Category, Hashtags, Description -> Supabase)
- *     2. Copy Video Link ("Link Copied Successfully")
- *     3. Delete Video (Dedicated Confirmation Popup -> Permanent Supabase Storage & DB deletion)
+ * - Direct Supabase Cloud Storage & Database Integration
+ * - Permanent Cross-Device Synchronization
+ * - Two-Mode Architecture: Public Portfolio Mode vs Authenticated Admin Mode
+ * - Real-time Cloud Connection Diagnostics & Orphan File Recovery
+ * - HTML5 Cross-Platform Video Playback (Desktop, iOS Safari, Android Chrome)
+ * - Three-Dot Menu (Edit Video, Copy Video Link, Permanent Cloud Deletion)
  * - Non-intrusive floating toast notifications
  * - Responsive UI preserving Obsidian & Electric Cyan branding
  */
@@ -21,11 +19,21 @@ document.addEventListener('DOMContentLoaded', () => {
   const navLinks = document.getElementById('navLinks');
   const navItems = document.querySelectorAll('.nav-link');
 
-  // Video Gallery Container
+  // Video Gallery Container & State Elements
   const portfolioVideoGrid = document.getElementById('portfolioVideoGrid');
+  const portfolioLoadingState = document.getElementById('portfolioLoadingState');
+  const portfolioErrorState = document.getElementById('portfolioErrorState');
+  const portfolioErrorDesc = document.getElementById('portfolioErrorDesc');
+  const retryGallerySyncBtn = document.getElementById('retryGallerySyncBtn');
+  const openAdminFromErrorBtn = document.getElementById('openAdminFromErrorBtn');
   const portfolioEmptyState = document.getElementById('portfolioEmptyState');
-  const openAddVideoBtn = document.getElementById('openAddVideoBtn');
+  const emptyStateTitle = document.getElementById('emptyStateTitle');
+  const emptyStateDesc = document.getElementById('emptyStateDesc');
   const emptyStateAddBtn = document.getElementById('emptyStateAddBtn');
+  const openAddVideoBtn = document.getElementById('openAddVideoBtn');
+  const adminSessionBadge = document.getElementById('adminSessionBadge');
+  const adminLogoutTrigger = document.getElementById('adminLogoutTrigger');
+  const openAdminModalBtn = document.getElementById('openAdminModalBtn');
 
   // Add Video Modal Elements
   const addVideoModal = document.getElementById('addVideoModal');
@@ -81,6 +89,28 @@ document.addEventListener('DOMContentLoaded', () => {
   const deleteTargetCaption = document.getElementById('deleteTargetCaption');
   let pendingDeleteTarget = null;
 
+  // Admin Authentication Modal Elements
+  const adminAuthModal = document.getElementById('adminAuthModal');
+  const closeAdminModal = document.getElementById('closeAdminModal');
+  const cancelAdminLoginBtn = document.getElementById('cancelAdminLoginBtn');
+  const tabAdminLoginBtn = document.getElementById('tabAdminLoginBtn');
+  const tabCloudConfigBtn = document.getElementById('tabCloudConfigBtn');
+  const adminLoginForm = document.getElementById('adminLoginForm');
+  const adminCloudConfigForm = document.getElementById('adminCloudConfigForm');
+  const adminEmailInput = document.getElementById('adminEmailInput');
+  const adminPasswordInput = document.getElementById('adminPasswordInput');
+  const submitAdminLoginBtn = document.getElementById('submitAdminLoginBtn');
+  const adminLoginError = document.getElementById('adminLoginError');
+  const adminLoginErrorText = document.getElementById('adminLoginErrorText');
+  const adminSupabaseUrlInput = document.getElementById('adminSupabaseUrlInput');
+  const adminSupabaseKeyInput = document.getElementById('adminSupabaseKeyInput');
+  const saveCloudConfigBtn = document.getElementById('saveCloudConfigBtn');
+  const testCloudConnectionBtn = document.getElementById('testCloudConnectionBtn');
+  const adminConfigAlert = document.getElementById('adminConfigAlert');
+  const adminConfigAlertText = document.getElementById('adminConfigAlertText');
+  const adminCloudStatusPill = document.getElementById('adminCloudStatusPill');
+  const adminCloudStatusInfo = document.getElementById('adminCloudStatusInfo');
+
   // Toast Container
   const toastContainer = document.getElementById('toastContainer');
 
@@ -88,10 +118,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const SUPPORTED_EXTENSIONS = ['mp4', 'webm', 'mov', 'm4v', '3gp', 'qt', 'ogv', 'mkv'];
   const SUPPORTED_MIME_PREFIXES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v', 'video/3gpp', 'video/3gpp2', 'video/ogg', 'video/'];
 
-  // In-memory state for user added videos, active player tracking & upload mutex
+  // Global In-Memory State
   let currentPreviewBlobUrl = null;
   let currentSelectedFile = null;
   let isUploading = false;
+  let isAdminMode = false;
   const allActiveVideoElements = [];
 
   /* --------------------------------------------------------------------------
@@ -158,22 +189,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const ext = parts.length > 1 ? parts.pop().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
     const type = (file.type || '').toLowerCase().trim();
 
-    // 1. Check known video extensions
     const hasValidExt = SUPPORTED_EXTENSIONS.includes(ext);
-
-    // 2. Check standard video MIME prefixes
     const hasValidMime = type.startsWith('video/') || SUPPORTED_MIME_PREFIXES.some((prefix) => type.startsWith(prefix));
 
-    // Valid if standard extension OR standard video MIME type
     if (hasValidExt || hasValidMime) return true;
 
-    // 3. Handle generic mobile MIME types (application/octet-stream or empty) if extension matches
     if ((!type || type === 'application/octet-stream' || type === 'binary/octet-stream') && hasValidExt) {
       return true;
     }
 
-    // 4. Mobile camera roll / content URI fallback (e.g. Android VID_20261101_172030 or 1000087683 without extension)
-    // When picked through video file input, if extension is absent or unusual and MIME is generic, accept as valid video
     if ((!type || type === 'application/octet-stream' || type === 'binary/octet-stream') && (!ext || ext.length > 5 || !isNaN(Number(ext)))) {
       return true;
     }
@@ -223,7 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
       toast.style.transform = 'translateY(10px)';
       toast.style.transition = 'all 0.22s ease';
       setTimeout(() => toast.remove(), 240);
-    }, 3200);
+    }, 3400);
   }
 
   function closeAllCardMenus() {
@@ -236,7 +260,51 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /* --------------------------------------------------------------------------
-     4. SINGLE ACTIVE VIDEO CONTROLLER
+     4. TWO-MODE SYSTEM: PUBLIC PORTFOLIO VS ADMIN MODE (REQUIREMENT 4)
+     -------------------------------------------------------------------------- */
+  async function checkAdminMode() {
+    if (window.ShacreatzSupabase && typeof window.ShacreatzSupabase.isAdminLoggedIn === 'function') {
+      isAdminMode = await window.ShacreatzSupabase.isAdminLoggedIn();
+    } else {
+      isAdminMode = false;
+    }
+    applyAdminModeUI();
+  }
+
+  function applyAdminModeUI() {
+    if (adminSessionBadge) {
+      adminSessionBadge.style.display = isAdminMode ? 'inline-flex' : 'none';
+    }
+    if (openAddVideoBtn) {
+      openAddVideoBtn.style.display = isAdminMode ? 'inline-flex' : 'none';
+    }
+    if (emptyStateAddBtn) {
+      emptyStateAddBtn.style.display = isAdminMode ? 'inline-flex' : 'none';
+    }
+
+    if (emptyStateTitle && emptyStateDesc) {
+      if (isAdminMode) {
+        emptyStateTitle.textContent = 'No Projects Uploaded Yet';
+        emptyStateDesc.textContent = 'Your Supabase cloud database is connected and ready. Add your first video.';
+      } else {
+        emptyStateTitle.textContent = 'Selected Works in Production';
+        emptyStateDesc.textContent = 'Creative video editing projects are currently being curated. Please check back shortly or get in touch below.';
+      }
+    }
+
+    // Refresh existing video cards to show/hide admin three-dot menu items
+    document.querySelectorAll('.portfolio-video-card').forEach((card) => {
+      const editBtn = card.querySelector('.edit-action');
+      const deleteBtn = card.querySelector('.delete-action');
+      const divider = card.querySelector('.dropdown-divider');
+      if (editBtn) editBtn.style.display = isAdminMode ? 'flex' : 'none';
+      if (deleteBtn) deleteBtn.style.display = isAdminMode ? 'flex' : 'none';
+      if (divider) divider.style.display = isAdminMode ? 'block' : 'none';
+    });
+  }
+
+  /* --------------------------------------------------------------------------
+     5. SINGLE ACTIVE VIDEO CONTROLLER
      -------------------------------------------------------------------------- */
   function registerVideoPlayer(videoEl) {
     if (!allActiveVideoElements.includes(videoEl)) {
@@ -260,7 +328,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /* --------------------------------------------------------------------------
-     5. PERSISTENT VIDEO CARD GENERATOR & THREE-DOT MENU
+     6. PERSISTENT VIDEO CARD GENERATOR
      -------------------------------------------------------------------------- */
   function createPersistentVideoCard(videoItem) {
     const card = document.createElement('article');
@@ -268,7 +336,7 @@ document.addEventListener('DOMContentLoaded', () => {
     card.id = `videoCard-${videoItem.id}`;
     card.setAttribute('data-id', videoItem.id);
 
-    const videoUrl = videoItem.video_url || videoItem.videoUrl;
+    const videoUrl = videoItem.video_url || videoItem.public_url || videoItem.videoUrl;
     let caption = videoItem.title || videoItem.caption || 'Uploaded Video';
     let category = videoItem.category || '';
     let tags = videoItem.tags || videoItem.hashtags || '';
@@ -306,7 +374,6 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
     `;
 
-    // Robust Play / Pause handling
     playOverlay.addEventListener('click', (e) => {
       e.stopPropagation();
       closeAllCardMenus();
@@ -315,7 +382,7 @@ document.addEventListener('DOMContentLoaded', () => {
         playOverlay.classList.add('hidden');
       }).catch((err) => {
         console.warn('[Video Playback Failed]', err);
-        showVideoErrorBadge('Video playback unavailable on this browser or URL inaccessible.');
+        showVideoErrorBadge('Video playback unavailable or stream URL inaccessible.');
       });
     });
 
@@ -331,7 +398,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     video.addEventListener('error', () => {
       console.warn('[Video Load Error] URL:', videoUrl);
-      showVideoErrorBadge('Video URL is invalid or inaccessible.');
+      showVideoErrorBadge('Video media is inaccessible or format unsupported by this browser.');
     });
 
     function showVideoErrorBadge(errorText) {
@@ -394,9 +461,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     metaWrap.appendChild(metaText);
 
-    // =========================================================================
     // THREE-DOT MENU COMPONENT
-    // =========================================================================
     const dotsWrap = document.createElement('div');
     dotsWrap.className = 'card-dots-wrap';
 
@@ -412,11 +477,12 @@ document.addEventListener('DOMContentLoaded', () => {
     dropdownMenu.className = 'card-dropdown-menu';
     dropdownMenu.setAttribute('role', 'menu');
 
-    // 1. Edit Video Action
+    // 1. Edit Video Action (Visible only to Admin)
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
     editBtn.className = 'dropdown-item edit-action';
     editBtn.setAttribute('data-action', 'edit-video');
+    editBtn.style.display = isAdminMode ? 'flex' : 'none';
     editBtn.innerHTML = `
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -425,7 +491,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <span>Edit Video</span>
     `;
 
-    // 2. Copy Video Link Action
+    // 2. Copy Video Link Action (Available to everyone)
     const copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.className = 'dropdown-item copy-action';
@@ -441,12 +507,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // Divider
     const divider = document.createElement('div');
     divider.className = 'dropdown-divider';
+    divider.style.display = isAdminMode ? 'block' : 'none';
 
-    // 3. Delete Video Action
+    // 3. Delete Video Action (Visible only to Admin)
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'dropdown-item dropdown-item-danger delete-action';
     deleteBtn.setAttribute('data-action', 'delete-video');
+    deleteBtn.style.display = isAdminMode ? 'flex' : 'none';
     deleteBtn.innerHTML = `
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polyline points="3 6 5 6 21 6"></polyline>
@@ -467,28 +535,25 @@ document.addEventListener('DOMContentLoaded', () => {
     card.appendChild(videoWrap);
     card.appendChild(metaWrap);
 
-    // --- Toggle Dropdown Handler ---
     dotsBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-
       const isOpen = dotsWrap.classList.contains('open');
       closeAllCardMenus();
-
       if (!isOpen) {
         dotsWrap.classList.add('open');
         card.classList.add('menu-active');
       }
     });
 
-    // --- Action: Copy Video Link ---
+    // Action: Copy Video Link
     copyBtn.addEventListener('click', async (e) => {
       e.preventDefault();
       e.stopPropagation();
       closeAllCardMenus();
 
       if (!videoUrl) {
-        showToast('Video URL is unavailable.', 'error');
+        showToast('Video link is unavailable.', 'error');
         return;
       }
 
@@ -508,29 +573,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         showToast('Link Copied Successfully', 'success');
       } catch (copyErr) {
-        console.warn('Clipboard copy error:', copyErr);
-        try {
-          const tempInput = document.createElement('textarea');
-          tempInput.value = videoUrl;
-          tempInput.style.position = 'fixed';
-          tempInput.style.opacity = '0';
-          document.body.appendChild(tempInput);
-          tempInput.focus();
-          tempInput.select();
-          document.execCommand('copy');
-          document.body.removeChild(tempInput);
-          showToast('Link Copied Successfully', 'success');
-        } catch (e2) {
-          showToast('Failed to copy video link.', 'error');
-        }
+        showToast('Failed to copy video link.', 'error');
       }
     });
 
-    // --- Action: Edit Video ---
+    // Action: Edit Video
     editBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       closeAllCardMenus();
+
+      if (!isAdminMode) {
+        showToast('Admin login required to edit videos.', 'error');
+        openAdminModal();
+        return;
+      }
 
       if (editVideoId) editVideoId.value = videoItem.id;
       if (editVideoTitleInput) editVideoTitleInput.value = caption;
@@ -541,7 +598,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
       openEditModal();
 
-      // Bind dynamic update closure to card elements
       card._updateMeta = (newTitle, newCategory, newTags, newDesc) => {
         caption = newTitle;
         category = newCategory;
@@ -558,11 +614,17 @@ document.addEventListener('DOMContentLoaded', () => {
       };
     });
 
-    // --- Action: Delete Video (Open Confirmation Popup) ---
+    // Action: Delete Video
     deleteBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       closeAllCardMenus();
+
+      if (!isAdminMode) {
+        showToast('Admin login required to delete videos.', 'error');
+        openAdminModal();
+        return;
+      }
 
       openDeleteModal({
         videoId: videoItem.id,
@@ -599,56 +661,103 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Global click outside closes any open three-dot menu
   document.addEventListener('click', (e) => {
-    if (!e.target.closest('.card-dots-wrap')) {
+    if (!e.target.closest || !e.target.closest('.card-dots-wrap')) {
       closeAllCardMenus();
     }
   });
 
   /* --------------------------------------------------------------------------
-     6. PORTFOLIO GALLERY INITIALIZATION (ZERO DEMO VIDEOS)
+     7. PORTFOLIO GALLERY INITIALIZATION (PERMANENT SUPABASE CLOUD RETRIEVAL)
      -------------------------------------------------------------------------- */
   async function initPortfolioGrid() {
     if (!portfolioVideoGrid) return;
     portfolioVideoGrid.innerHTML = '';
 
-    // Show empty state while loading
-    if (portfolioEmptyState) {
-      portfolioEmptyState.style.display = 'flex';
-    }
+    // Show loading state
+    if (portfolioLoadingState) portfolioLoadingState.style.display = 'flex';
+    if (portfolioErrorState) portfolioErrorState.style.display = 'none';
+    if (portfolioEmptyState) portfolioEmptyState.style.display = 'none';
 
-    // Fetch all persistent genuine videos from Supabase Cloud Database (or local persistence mirror)
+    await checkAdminMode();
+
     if (window.ShacreatzSupabase && typeof window.ShacreatzSupabase.fetchVideos === 'function') {
       try {
-        const persistentVideos = await window.ShacreatzSupabase.fetchVideos();
-        if (Array.isArray(persistentVideos) && persistentVideos.length > 0) {
+        const result = await window.ShacreatzSupabase.fetchVideos();
+
+        if (portfolioLoadingState) {
+          portfolioLoadingState.style.display = 'none';
+        }
+
+        if (!result.success) {
+          console.warn('[Supabase Cloud Sync]', result.message);
+          if (portfolioErrorState) {
+            portfolioErrorState.style.display = 'flex';
+            if (portfolioErrorDesc) {
+              if (result.error === 'NOT_CONFIGURED') {
+                portfolioErrorDesc.textContent = 'Supabase Cloud Database credentials are not configured in Vercel. Video uploads and cross-device gallery synchronization require active credentials.';
+              } else {
+                portfolioErrorDesc.textContent = `Could not connect to Supabase Cloud Database: ${result.message}. If your free-tier project is paused, please unpause it in the Supabase Dashboard.`;
+              }
+            }
+          }
           if (portfolioEmptyState) {
             portfolioEmptyState.style.display = 'none';
           }
-          persistentVideos.forEach((videoItem) => {
+          return;
+        }
+
+        const genuineVideos = result.videos || [];
+
+        if (genuineVideos.length > 0) {
+          if (portfolioEmptyState) portfolioEmptyState.style.display = 'none';
+          if (portfolioErrorState) portfolioErrorState.style.display = 'none';
+
+          genuineVideos.forEach((videoItem) => {
             const card = createPersistentVideoCard(videoItem);
             portfolioVideoGrid.appendChild(card);
           });
         } else {
-          // Zero videos uploaded yet
+          // Zero published videos yet
           if (portfolioEmptyState) {
             portfolioEmptyState.style.display = 'flex';
           }
+          if (portfolioErrorState) {
+            portfolioErrorState.style.display = 'none';
+          }
         }
       } catch (err) {
-        console.warn('[Supabase] Could not load persistent videos on startup:', err);
-        if (portfolioEmptyState) {
-          portfolioEmptyState.style.display = 'flex';
+        console.error('[Supabase] Failed to synchronize portfolio gallery:', err);
+        if (portfolioLoadingState) portfolioLoadingState.style.display = 'none';
+        if (portfolioErrorState) {
+          portfolioErrorState.style.display = 'flex';
+          if (portfolioErrorDesc) {
+            portfolioErrorDesc.textContent = `Unexpected network error: ${err.message}. Please check your connection and retry.`;
+          }
         }
       }
     }
   }
 
+  // Pre-initialize Gallery
   initPortfolioGrid();
 
+  // Retry Connection Button Handler
+  if (retryGallerySyncBtn) {
+    retryGallerySyncBtn.addEventListener('click', () => {
+      initPortfolioGrid();
+      showToast('Reconnecting to Supabase Cloud...', 'info');
+    });
+  }
+
   /* --------------------------------------------------------------------------
-     7. ADD VIDEO MODAL CONTROLS & BROWSE FILES
+     8. ADD VIDEO MODAL CONTROLS & BROWSE FILES
      -------------------------------------------------------------------------- */
   function openModal() {
+    if (!isAdminMode) {
+      showToast('Admin authentication required to add videos.', 'info');
+      openAdminModal();
+      return;
+    }
     if (!addVideoModal) return;
     closeAllCardMenus();
     addVideoModal.classList.add('open');
@@ -708,15 +817,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const ext = parts.length > 1 ? parts.pop().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
     const isValid = isValidVideoFile(file);
 
-    // STAGE 1 DIAGNOSTIC LOG IMMEDIATELY UPON SELECTION (Requirement 1)
     console.log('[SHACREATZ DIAGNOSTIC 1/6: FILE SELECTION]', {
       fileName: file.name,
       fileType: file.type || '(empty / unknown by mobile browser)',
       fileSizeBytes: file.size,
       fileSizeMB: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
       fileExtension: ext || '(none)',
-      isValidFile: isValid,
-      hasBlobInstance: file instanceof Blob
+      isValidFile: isValid
     });
 
     if (modalUploadErrorBanner) modalUploadErrorBanner.style.display = 'none';
@@ -737,13 +844,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (filePickerNote) filePickerNote.textContent = `${(file.size / (1024 * 1024)).toFixed(1)} MB · Ready to Add`;
     if (videoFilePicker) videoFilePicker.classList.add('has-file');
 
-    // Auto-fill caption if empty
     if (videoCaptionInput && !videoCaptionInput.value.trim()) {
       const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
       videoCaptionInput.value = cleanName;
     }
 
-    // Revoke previous preview
     if (currentPreviewBlobUrl) {
       try {
         URL.revokeObjectURL(currentPreviewBlobUrl);
@@ -757,7 +862,6 @@ document.addEventListener('DOMContentLoaded', () => {
       videoPreviewWrapper.style.display = 'block';
       if (previewDurationBadge) previewDurationBadge.textContent = 'Loading...';
 
-      // Clear previous sources to prevent accumulating tags in DOM
       while (modalVideoPreview.firstChild) {
         modalVideoPreview.removeChild(modalVideoPreview.firstChild);
       }
@@ -789,7 +893,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Browse Files button directly triggers file input
   if (browseFilesBtn && videoFileInput) {
     browseFilesBtn.addEventListener('click', (e) => {
       e.preventDefault();
@@ -798,7 +901,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // File Input Events
   if (videoFileInput) {
     videoFileInput.addEventListener('change', (e) => {
       const file = e.target.files && e.target.files[0];
@@ -806,7 +908,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Drag & drop support
   if (videoFilePicker) {
     videoFilePicker.addEventListener('click', (e) => {
       if (e.target !== browseFilesBtn && !browseFilesBtn.contains(e.target)) {
@@ -840,7 +941,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Modal open & close listeners
   if (openAddVideoBtn) openAddVideoBtn.addEventListener('click', openModal);
   if (emptyStateAddBtn) emptyStateAddBtn.addEventListener('click', openModal);
   if (closeAddVideoModal) closeAddVideoModal.addEventListener('click', closeModal);
@@ -853,7 +953,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /* --------------------------------------------------------------------------
-     8. EDIT VIDEO MODAL CONTROLS
+     9. EDIT VIDEO MODAL CONTROLS
      -------------------------------------------------------------------------- */
   function openEditModal() {
     if (!editVideoModal) return;
@@ -886,6 +986,12 @@ document.addEventListener('DOMContentLoaded', () => {
     editVideoForm.addEventListener('submit', async (e) => {
       e.preventDefault();
 
+      if (!isAdminMode) {
+        showToast('Admin authentication required.', 'error');
+        openAdminModal();
+        return;
+      }
+
       const videoId = editVideoId ? editVideoId.value : '';
       const newTitle = editVideoTitleInput ? editVideoTitleInput.value.trim() : '';
       const newCategory = editVideoCategoryInput ? editVideoCategoryInput.value.trim() : '';
@@ -913,7 +1019,6 @@ document.addEventListener('DOMContentLoaded', () => {
           });
         }
 
-        // Refresh card content automatically in DOM
         const targetCard = document.getElementById(`videoCard-${videoId}`);
         if (targetCard) {
           if (typeof targetCard._updateMeta === 'function') {
@@ -941,10 +1046,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         closeEditModal();
-        showToast('Video details updated successfully!', 'success');
+        showToast('Video details updated in Supabase!', 'success');
       } catch (err) {
         console.error('[Update Video Error]', err);
-        showToast('Failed to update video details.', 'error');
+        showToast('Failed to update video: ' + (err.message || 'Check database connection.'), 'error');
       } finally {
         if (saveEditVideoBtn) {
           saveEditVideoBtn.disabled = false;
@@ -960,7 +1065,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /* --------------------------------------------------------------------------
-     9. DELETE CONFIRMATION MODAL CONTROLS
+     10. DELETE CONFIRMATION MODAL CONTROLS
      -------------------------------------------------------------------------- */
   function openDeleteModal(target) {
     if (!deleteConfirmModal) return;
@@ -995,10 +1100,17 @@ document.addEventListener('DOMContentLoaded', () => {
     confirmDeleteVideoBtn.addEventListener('click', async () => {
       if (!pendingDeleteTarget) return;
 
+      if (!isAdminMode) {
+        showToast('Admin authentication required.', 'error');
+        closeDeleteModal();
+        openAdminModal();
+        return;
+      }
+
       const { videoId, storagePath, card, video } = pendingDeleteTarget;
 
       confirmDeleteVideoBtn.disabled = true;
-      confirmDeleteVideoBtn.innerHTML = `<span>Deleting...</span>`;
+      confirmDeleteVideoBtn.innerHTML = `<span>Deleting from Supabase...</span>`;
 
       try {
         if (video) {
@@ -1006,12 +1118,10 @@ document.addEventListener('DOMContentLoaded', () => {
           unregisterVideoPlayer(video);
         }
 
-        // Delete from Supabase Storage & Database
         if (window.ShacreatzSupabase && typeof window.ShacreatzSupabase.deleteVideo === 'function') {
           await window.ShacreatzSupabase.deleteVideo(videoId, storagePath);
         }
 
-        // Remove card from gallery only after successful deletion
         if (card) {
           card.style.opacity = '0';
           card.style.transform = 'scale(0.95)';
@@ -1025,10 +1135,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         closeDeleteModal();
-        showToast('Video permanently deleted.', 'success');
+        showToast('Video permanently deleted from Supabase Cloud.', 'success');
       } catch (err) {
         console.error('[Delete Video Error]', err);
-        showToast('Failed to delete video. Please check your connection.', 'error');
+        showToast('Failed to delete video: ' + (err.message || 'Check database connection.'), 'error');
       } finally {
         confirmDeleteVideoBtn.disabled = false;
         confirmDeleteVideoBtn.innerHTML = `
@@ -1042,23 +1152,20 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      closeAllCardMenus();
-      if (addVideoModal && addVideoModal.classList.contains('open')) closeModal();
-      if (editVideoModal && editVideoModal.classList.contains('open')) closeEditModal();
-      if (deleteConfirmModal && deleteConfirmModal.classList.contains('open')) closeDeleteModal();
-    }
-  });
-
   /* --------------------------------------------------------------------------
-     10. FORM SUBMISSION (DIRECT MOBILE FILE UPLOAD TO SUPABASE & DETAILED ERRORS)
+     11. FORM SUBMISSION (STORAGE UPLOAD + DATABASE METADATA INSERTION)
      -------------------------------------------------------------------------- */
   if (addVideoForm) {
     addVideoForm.addEventListener('submit', async (e) => {
       e.preventDefault();
 
-      // Prevent duplicate upload requests (Requirement 4)
+      if (!isAdminMode) {
+        showToast('Admin authentication required to upload videos.', 'error');
+        closeModal();
+        openAdminModal();
+        return;
+      }
+
       if (isUploading) {
         console.warn('[SHACREATZ UPLOAD TRACE] Upload already in progress. Ignoring duplicate request.');
         return;
@@ -1071,7 +1178,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const tags = videoTagsInput ? videoTagsInput.value.trim() : '';
       const description = videoDescInput ? videoDescInput.value.trim() : '';
 
-      // Reset previous error indicators
       if (modalUploadErrorBanner) modalUploadErrorBanner.style.display = 'none';
       if (fileErrorMsg) fileErrorMsg.style.display = 'none';
       if (captionErrorMsg) captionErrorMsg.style.display = 'none';
@@ -1099,7 +1205,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (hasError) return;
 
-      // Verify that the File object reached the upload function (Requirement 1 & 3)
       console.log('[SHACREATZ DIAGNOSTIC 1/6: FILE REACHED PIPELINE]', {
         name: file.name,
         type: file.type || '(empty / unspecified by mobile browser)',
@@ -1110,7 +1215,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
       isUploading = true;
 
-      // Show uploading state on button & progress bar
       if (submitAddVideoBtn) {
         submitAddVideoBtn.disabled = true;
         submitAddVideoBtn.innerHTML = `
@@ -1135,54 +1239,42 @@ document.addEventListener('DOMContentLoaded', () => {
         if (uploadProgressLabel) uploadProgressLabel.textContent = 'Initiating cloud upload stream...';
       }
 
-      let uploadResult = null;
       try {
-        // 1. Upload actual selected video file to Supabase Cloud Storage (with ASCII-safe filename & real progress)
-        uploadResult = await window.ShacreatzSupabase.uploadVideo(file, (pct, msg) => {
+        // 1. Upload actual selected video file to Supabase Cloud Storage
+        const uploadResult = await window.ShacreatzSupabase.uploadVideo(file, (pct, msg) => {
           if (uploadProgressFill) uploadProgressFill.style.width = `${pct}%`;
           if (uploadProgressPct) uploadProgressPct.textContent = `${pct}%`;
           if (uploadProgressLabel && msg) uploadProgressLabel.textContent = msg;
         });
 
-        // 2. Save video metadata to Supabase PostgreSQL Database
-        let dbRecord;
-        try {
-          dbRecord = await window.ShacreatzSupabase.saveMetadata({
-            title: caption,
-            category: category || 'Uploaded Video',
-            tags: tags,
-            description: description,
-            videoUrl: uploadResult.publicUrl,
-            fileName: file.name, // Preserves original full-Unicode filename in DB
-            mimeType: uploadResult.mimeType || getNormalizedMimeType(file),
-            fileSize: file.size,
-            storagePath: uploadResult.storagePath,
-            isLocalBlob: uploadResult.isLocalBlob,
-            fileBlob: uploadResult.fileBlob
-          });
-        } catch (dbErr) {
-          // SAFE CLEANUP: If database insertion fails after storage upload,
-          // remove the uploaded storage file to prevent orphaned objects! (Requirement 4)
-          console.error('[DB Insert Failed - Cleaning up storage object]', dbErr);
-          if (uploadResult && uploadResult.storagePath && !uploadResult.isLocalBlob) {
-            await window.ShacreatzSupabase.deleteVideo(null, uploadResult.storagePath).catch(() => {});
-          }
-          const detailedMsg = 'Storage upload succeeded, but database insertion failed: ' + (dbErr.message || 'Check database connection.');
-          throw new Error(detailedMsg);
-        }
+        // 2. Save video metadata into Supabase PostgreSQL Database (with automatic rollback on failure)
+        const dbRecord = await window.ShacreatzSupabase.saveMetadata({
+          title: caption,
+          category: category || 'Uploaded Video',
+          tags: tags,
+          description: description,
+          videoUrl: uploadResult.publicUrl,
+          fileName: file.name,
+          mimeType: uploadResult.mimeType || getNormalizedMimeType(file),
+          fileSize: file.size,
+          storagePath: uploadResult.storagePath
+        });
 
         if (portfolioEmptyState) {
           portfolioEmptyState.style.display = 'none';
         }
+        if (portfolioErrorState) {
+          portfolioErrorState.style.display = 'none';
+        }
 
-        // 3. Immediately display the newly uploaded persistent video card in gallery
+        // 3. Display new card in gallery
         const card = createPersistentVideoCard(dbRecord);
         if (portfolioVideoGrid) {
           portfolioVideoGrid.appendChild(card);
         }
 
         closeModal();
-        showToast('Video uploaded and published successfully!', 'success');
+        showToast('Video uploaded and published permanently to Supabase Cloud!', 'success');
 
         setTimeout(() => {
           card.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1191,7 +1283,6 @@ document.addEventListener('DOMContentLoaded', () => {
         console.error('[Upload Pipeline Failed]', uploadErr);
         const errorReason = uploadErr.message || 'Upload failed. Please check your connection.';
 
-        // Display actual failure reason in admin interface (Requirement 5)
         if (fileErrorMsg) {
           fileErrorMsg.textContent = errorReason;
           fileErrorMsg.style.display = 'block';
@@ -1226,6 +1317,200 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  /* --------------------------------------------------------------------------
+     12. ADMIN AUTHENTICATION & CLOUD CONFIGURATION CONTROLS
+     -------------------------------------------------------------------------- */
+  function openAdminModal() {
+    if (!adminAuthModal) return;
+    closeAllCardMenus();
+    adminAuthModal.classList.add('open');
+    adminAuthModal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+
+    // Update cloud diagnostic in modal
+    updateCloudStatusUI();
+
+    // Populate existing URL and Key if configured
+    if (adminSupabaseUrlInput && window.SUPABASE_CONFIG && window.SUPABASE_CONFIG.url) {
+      adminSupabaseUrlInput.value = window.SUPABASE_CONFIG.url;
+    }
+  }
+
+  function closeAdminModalDialog() {
+    if (!adminAuthModal) return;
+    adminAuthModal.classList.remove('open');
+    adminAuthModal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+  }
+
+  async function updateCloudStatusUI() {
+    if (!adminCloudStatusPill || !adminCloudStatusInfo) return;
+    adminCloudStatusPill.className = 'cloud-status-pill';
+    adminCloudStatusPill.textContent = 'TESTING...';
+
+    if (window.ShacreatzSupabase && typeof window.ShacreatzSupabase.testCloudConnection === 'function') {
+      const res = await window.ShacreatzSupabase.testCloudConnection();
+      if (res.restAccessible && res.storageAccessible) {
+        adminCloudStatusPill.className = 'cloud-status-pill status-ready';
+        adminCloudStatusPill.textContent = 'ONLINE & READY';
+        adminCloudStatusInfo.textContent = 'Supabase Cloud Database & Storage are fully verified and active.';
+      } else {
+        adminCloudStatusPill.className = 'cloud-status-pill status-error';
+        adminCloudStatusPill.textContent = 'DISCONNECTED';
+        adminCloudStatusInfo.textContent = res.message || 'Supabase credentials missing or invalid.';
+      }
+    }
+  }
+
+  if (openAdminModalBtn) openAdminModalBtn.addEventListener('click', openAdminModal);
+  if (openAdminFromErrorBtn) openAdminFromErrorBtn.addEventListener('click', openAdminModal);
+  if (closeAdminModal) closeAdminModal.addEventListener('click', closeAdminModalDialog);
+  if (cancelAdminLoginBtn) cancelAdminLoginBtn.addEventListener('click', closeAdminModalDialog);
+
+  if (adminAuthModal) {
+    adminAuthModal.addEventListener('click', (e) => {
+      if (e.target === adminAuthModal) closeAdminModalDialog();
+    });
+  }
+
+  // Admin Modal Tab Switching
+  if (tabAdminLoginBtn && tabCloudConfigBtn && adminLoginForm && adminCloudConfigForm) {
+    tabAdminLoginBtn.addEventListener('click', () => {
+      tabAdminLoginBtn.classList.add('active');
+      tabCloudConfigBtn.classList.remove('active');
+      adminLoginForm.style.display = 'block';
+      adminCloudConfigForm.style.display = 'none';
+    });
+
+    tabCloudConfigBtn.addEventListener('click', () => {
+      tabCloudConfigBtn.classList.add('active');
+      tabAdminLoginBtn.classList.remove('active');
+      adminCloudConfigForm.style.display = 'block';
+      adminLoginForm.style.display = 'none';
+    });
+  }
+
+  // Admin Login Submission (Email & Password via Supabase Auth)
+  if (adminLoginForm) {
+    adminLoginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = adminEmailInput ? adminEmailInput.value.trim() : '';
+      const password = adminPasswordInput ? adminPasswordInput.value : '';
+
+      if (!email || !password) return;
+
+      if (submitAdminLoginBtn) {
+        submitAdminLoginBtn.disabled = true;
+        submitAdminLoginBtn.textContent = 'AUTHENTICATING...';
+      }
+      if (adminLoginError) adminLoginError.style.display = 'none';
+
+      try {
+        if (window.ShacreatzSupabase && typeof window.ShacreatzSupabase.signInAdmin === 'function') {
+          await window.ShacreatzSupabase.signInAdmin(email, password);
+        }
+        isAdminMode = true;
+        applyAdminModeUI();
+        closeAdminModalDialog();
+        showToast('Authenticated as Admin. Video controls unlocked!', 'success');
+        initPortfolioGrid();
+      } catch (authErr) {
+        if (adminLoginError && adminLoginErrorText) {
+          adminLoginErrorText.textContent = authErr.message || 'Invalid email or password.';
+          adminLoginError.style.display = 'flex';
+        }
+      } finally {
+        if (submitAdminLoginBtn) {
+          submitAdminLoginBtn.disabled = false;
+          submitAdminLoginBtn.textContent = 'SIGN IN AS ADMIN';
+        }
+      }
+    });
+  }
+
+  // Cloud Credentials Test & Save
+  if (testCloudConnectionBtn) {
+    testCloudConnectionBtn.addEventListener('click', async () => {
+      const url = adminSupabaseUrlInput ? adminSupabaseUrlInput.value.trim() : '';
+      const key = adminSupabaseKeyInput ? adminSupabaseKeyInput.value.trim() : '';
+
+      testCloudConnectionBtn.disabled = true;
+      testCloudConnectionBtn.textContent = 'Testing...';
+
+      if (window.ShacreatzSupabase && typeof window.ShacreatzSupabase.testCloudConnection === 'function') {
+        const testRes = await window.ShacreatzSupabase.testCloudConnection(url, key);
+        if (adminConfigAlert && adminConfigAlertText) {
+          adminConfigAlertText.textContent = testRes.message;
+          adminConfigAlert.style.display = 'flex';
+        }
+        if (testRes.restAccessible && testRes.storageAccessible) {
+          showToast('Connection verified successfully!', 'success');
+        } else {
+          showToast('Connection check warning: ' + testRes.message, 'error');
+        }
+      }
+      testCloudConnectionBtn.disabled = false;
+      testCloudConnectionBtn.textContent = 'Test Connection';
+    });
+  }
+
+  if (adminCloudConfigForm) {
+    adminCloudConfigForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const url = adminSupabaseUrlInput ? adminSupabaseUrlInput.value.trim() : '';
+      const key = adminSupabaseKeyInput ? adminSupabaseKeyInput.value.trim() : '';
+
+      if (!url || !key) {
+        showToast('Please enter both Supabase URL and Anon Key.', 'error');
+        return;
+      }
+
+      if (saveCloudConfigBtn) {
+        saveCloudConfigBtn.disabled = true;
+        saveCloudConfigBtn.textContent = 'Saving...';
+      }
+
+      try {
+        if (window.ShacreatzSupabase && typeof window.ShacreatzSupabase.setCustomCredentials === 'function') {
+          await window.ShacreatzSupabase.setCustomCredentials(url, key);
+        }
+        showToast('Supabase credentials configured!', 'success');
+        closeAdminModalDialog();
+        initPortfolioGrid();
+      } catch (err) {
+        showToast('Configuration error: ' + err.message, 'error');
+      } finally {
+        if (saveCloudConfigBtn) {
+          saveCloudConfigBtn.disabled = false;
+          saveCloudConfigBtn.textContent = 'SAVE & CONNECT';
+        }
+      }
+    });
+  }
+
+  // Admin Logout Handler
+  if (adminLogoutTrigger) {
+    adminLogoutTrigger.addEventListener('click', async () => {
+      if (window.ShacreatzSupabase && typeof window.ShacreatzSupabase.signOutAdmin === 'function') {
+        await window.ShacreatzSupabase.signOutAdmin();
+      }
+      isAdminMode = false;
+      applyAdminModeUI();
+      showToast('Logged out of Admin Mode. Public portfolio view active.', 'info');
+    });
+  }
+
+  // Escape key closes modals
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeAllCardMenus();
+      if (addVideoModal && addVideoModal.classList.contains('open')) closeModal();
+      if (editVideoModal && editVideoModal.classList.contains('open')) closeEditModal();
+      if (deleteConfirmModal && deleteConfirmModal.classList.contains('open')) closeDeleteModal();
+      if (adminAuthModal && adminAuthModal.classList.contains('open')) closeAdminModalDialog();
+    }
+  });
+
   // Real-time error clearing
   if (videoCaptionInput) {
     videoCaptionInput.addEventListener('input', () => {
@@ -1243,9 +1528,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  /* --------------------------------------------------------------------------
-     11. CLEANUP ON UNLOAD
-     -------------------------------------------------------------------------- */
+  // Cleanup on page unload
   window.addEventListener('beforeunload', () => {
     if (currentPreviewBlobUrl) {
       try {

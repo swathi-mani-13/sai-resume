@@ -1,28 +1,40 @@
 -- ============================================================================
--- SHACREATZ PORTFOLIO — SUPABASE DATABASE & STORAGE SETUP (V5.3)
+-- SHACREATZ PORTFOLIO — SUPABASE DATABASE & STORAGE SETUP (V5.4)
 -- ============================================================================
 -- Run this entire script in your Supabase Project:
 -- Supabase Dashboard -> SQL Editor -> New Query -> Paste & Click 'Run'
 -- ============================================================================
 
--- 1. Create the portfolio_videos table for persistent video metadata
+-- 1. Create the portfolio_videos table for permanent cross-device persistence
 CREATE TABLE IF NOT EXISTS public.portfolio_videos (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title TEXT NOT NULL,
+  caption TEXT,
   category TEXT DEFAULT 'Uploaded Video',
   tags TEXT,
   description TEXT,
   video_url TEXT NOT NULL,
+  public_url TEXT,
   file_name TEXT,
   mime_type TEXT DEFAULT 'video/mp4',
   file_size BIGINT,
   storage_path TEXT,
+  status TEXT DEFAULT 'published',
+  publication_status TEXT DEFAULT 'published',
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Ensure tags and description columns exist if table was previously created
+-- Ensure all optional and alias columns exist if table was previously created
+ALTER TABLE public.portfolio_videos ADD COLUMN IF NOT EXISTS caption TEXT;
 ALTER TABLE public.portfolio_videos ADD COLUMN IF NOT EXISTS tags TEXT;
 ALTER TABLE public.portfolio_videos ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE public.portfolio_videos ADD COLUMN IF NOT EXISTS public_url TEXT;
+ALTER TABLE public.portfolio_videos ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'published';
+ALTER TABLE public.portfolio_videos ADD COLUMN IF NOT EXISTS publication_status TEXT DEFAULT 'published';
+
+-- Create performance index for lightning fast gallery loads & duplicate lookups
+CREATE INDEX IF NOT EXISTS idx_portfolio_videos_created ON public.portfolio_videos (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_portfolio_videos_storage_path ON public.portfolio_videos (storage_path);
 
 -- 2. Clean up any legacy demo / sample records from earlier initializations
 DELETE FROM public.portfolio_videos
@@ -48,7 +60,7 @@ DROP POLICY IF EXISTS "portfolio_videos_update_policy" ON public.portfolio_video
 DROP POLICY IF EXISTS "portfolio_videos_delete_policy" ON public.portfolio_videos;
 
 -- 5. Create RLS Policies for portfolio_videos table
--- SELECT: Anyone (public, authenticated admin, anon) can view video metadata
+-- SELECT: Anyone (public visitors, recruiters, anon, authenticated) can view published video metadata
 CREATE POLICY "portfolio_videos_select_policy"
   ON public.portfolio_videos
   FOR SELECT
@@ -103,7 +115,7 @@ DROP POLICY IF EXISTS "portfolio_videos_storage_insert" ON storage.objects;
 DROP POLICY IF EXISTS "portfolio_videos_storage_update" ON storage.objects;
 DROP POLICY IF EXISTS "portfolio_videos_storage_delete" ON storage.objects;
 
--- Storage Policy: Anyone (public, authenticated, anon) can stream/view video media
+-- Storage Policy: Anyone (public visitors, anon, authenticated) can stream/view video media
 CREATE POLICY "portfolio_videos_storage_select"
   ON storage.objects
   FOR SELECT

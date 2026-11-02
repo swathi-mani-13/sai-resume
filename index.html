@@ -160,9 +160,17 @@
         <div class="work-section-head">
           <h2 class="work-heading">SELECTED WORK</h2>
 
-          <!-- + ADD VIDEO Action Button -->
+          <!-- Work Header Actions (Admin Badge & Add Video Button) -->
           <div class="work-head-action">
-            <button type="button" class="btn btn-add-video" id="openAddVideoBtn" aria-label="Add new video to portfolio">
+            <!-- Admin Session Badge (Visible only to authenticated admin) -->
+            <div class="admin-session-badge" id="adminSessionBadge" style="display: none;">
+              <span class="admin-badge-dot"></span>
+              <span class="admin-badge-label">ADMIN MODE</span>
+              <button type="button" class="admin-logout-trigger" id="adminLogoutTrigger" title="Log out of Admin">Logout</button>
+            </div>
+
+            <!-- + ADD VIDEO Action Button (Visible only to authenticated admin) -->
+            <button type="button" class="btn btn-add-video" id="openAddVideoBtn" style="display: none;" aria-label="Add new video to portfolio">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                 <line x1="12" y1="5" x2="12" y2="19"></line>
                 <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -172,9 +180,42 @@
           </div>
         </div>
 
-        <!-- 4-Card Video Grid Container -->
+        <!-- 1. Loading State (Shown while fetching published videos from Supabase Cloud) -->
+        <div class="portfolio-loading-state" id="portfolioLoadingState" style="display: flex;">
+          <div class="cloud-loading-spinner"></div>
+          <p class="loading-state-text">Synchronizing gallery with Supabase Cloud Database...</p>
+        </div>
+
+        <!-- 2. Cloud Offline / Connection Error State -->
+        <div class="portfolio-error-state" id="portfolioErrorState" style="display: none;">
+          <div class="error-icon-box">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+          </div>
+          <h3 class="error-state-title">Cloud Database Offline</h3>
+          <p class="error-state-desc" id="portfolioErrorDesc">
+            Unable to connect to Supabase Cloud Database. Videos cannot be synchronized across devices until active Supabase credentials are configured in Vercel settings.
+          </p>
+          <div class="error-state-actions">
+            <button type="button" class="btn btn-outline" id="retryGallerySyncBtn">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+              <span>Retry Cloud Connection</span>
+            </button>
+            <button type="button" class="btn btn-primary" id="openAdminFromErrorBtn">
+              <span>Admin Login / Config</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 3. Video Grid Container (All published videos from Supabase) -->
         <div class="portfolio-video-grid" id="portfolioVideoGrid">
-          <!-- Populated dynamically via js/app.js with the 4 real videos & user additions -->
+          <!-- Populated dynamically via js/app.js from Supabase Cloud Database -->
         </div>
 
         <!-- Reference Footer Bar -->
@@ -187,17 +228,17 @@
           </div>
         </div>
 
-        <!-- Empty State (Shown when no user projects are uploaded yet) -->
-        <div class="portfolio-empty-state" id="portfolioEmptyState" style="display: flex;">
+        <!-- 4. Empty State (Shown only when Supabase connects successfully but 0 genuine videos exist) -->
+        <div class="portfolio-empty-state" id="portfolioEmptyState" style="display: none;">
           <div class="empty-icon-box">
             <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polygon points="23 7 16 12 23 17 23 7"></polygon>
               <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
             </svg>
           </div>
-          <h3 class="empty-state-title">No Projects Uploaded Yet</h3>
-          <p class="empty-state-desc">No projects uploaded yet. Add your first video.</p>
-          <button type="button" class="btn btn-primary" id="emptyStateAddBtn">
+          <h3 class="empty-state-title" id="emptyStateTitle">No Projects Uploaded Yet</h3>
+          <p class="empty-state-desc" id="emptyStateDesc">No projects uploaded yet. Add your first video.</p>
+          <button type="button" class="btn btn-primary" id="emptyStateAddBtn" style="display: none;">
             <span>+ ADD VIDEO NOW</span>
           </button>
         </div>
@@ -612,6 +653,15 @@
     <div class="container footer-bottom">
       <p>© 2026 shacreatz. All Rights Reserved.</p>
       <p class="footer-credit">Crafted for J Saivenkatesh</p>
+      <div class="footer-admin-link-wrap">
+        <button type="button" class="footer-admin-link" id="openAdminModalBtn" aria-label="Open Admin Access">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+          <span>ADMIN ACCESS</span>
+        </button>
+      </div>
     </div>
   </footer>
 
@@ -851,17 +901,111 @@
     </div>
   </div>
 
+  <!-- ==========================================================================
+       ADMIN AUTHENTICATION & CLOUD CONFIGURATION MODAL
+       ========================================================================== -->
+  <div class="video-modal-backdrop" id="adminAuthModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="adminModalTitle">
+    <div class="modal-dialog modal-dialog-admin">
+      <button type="button" class="modal-close-btn" id="closeAdminModal" aria-label="Close admin modal">&times;</button>
+      
+      <div class="modal-header-block">
+        <span class="mono-tag">// PORTFOLIO OWNER PORTAL</span>
+        <h3 class="modal-heading" id="adminModalTitle">Admin Authentication</h3>
+        <p class="modal-subtitle">Access portfolio video upload, edit, and deletion management controls.</p>
+      </div>
+
+      <!-- Cloud Status Card -->
+      <div class="admin-cloud-status-card" id="adminCloudStatusCard">
+        <div class="cloud-status-header">
+          <span class="cloud-status-label">SUPABASE CLOUD PERSISTENCE</span>
+          <span class="cloud-status-pill" id="adminCloudStatusPill">CHECKING...</span>
+        </div>
+        <p class="cloud-status-info" id="adminCloudStatusInfo">Connecting to Supabase...</p>
+      </div>
+
+      <div class="admin-tabs-nav">
+        <button type="button" class="admin-tab-btn active" id="tabAdminLoginBtn">Admin Login</button>
+        <button type="button" class="admin-tab-btn" id="tabCloudConfigBtn">Cloud Setup / Keys</button>
+      </div>
+
+      <!-- Tab 1: Supabase Auth Login -->
+      <form class="modal-form" id="adminLoginForm">
+        <div class="form-group">
+          <label class="form-label" for="adminEmailInput">Admin Email</label>
+          <input type="email" class="form-control" id="adminEmailInput" placeholder="admin@example.com" autocomplete="username" required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="adminPasswordInput">Admin Password</label>
+          <input type="password" class="form-control" id="adminPasswordInput" placeholder="Enter password" autocomplete="current-password" required>
+        </div>
+
+        <div class="modal-upload-error-banner" id="adminLoginError" style="display: none; margin-bottom: 14px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+          <span id="adminLoginErrorText">Invalid credentials.</span>
+        </div>
+
+        <div class="modal-form-actions">
+          <button type="button" class="btn btn-outline" id="cancelAdminLoginBtn">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="submitAdminLoginBtn">
+            <span>SIGN IN AS ADMIN</span>
+          </button>
+        </div>
+      </form>
+
+      <!-- Tab 2: Direct Supabase Credentials Setup -->
+      <form class="modal-form" id="adminCloudConfigForm" style="display: none;">
+        <p class="config-instructions">
+          To synchronize videos permanently across all devices, set these in Vercel Project Settings or paste them here directly:
+        </p>
+
+        <div class="form-group">
+          <label class="form-label" for="adminSupabaseUrlInput">SUPABASE_URL</label>
+          <input type="url" class="form-control" id="adminSupabaseUrlInput" placeholder="https://your-ref.supabase.co">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="adminSupabaseKeyInput">SUPABASE_ANON_KEY (JWT)</label>
+          <input type="password" class="form-control" id="adminSupabaseKeyInput" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
+          <span style="color: #8B95A1; font-size: 0.72rem; margin-top: 4px; display: block;">
+            Copy from Supabase Dashboard ➔ Project Settings ➔ API ➔ 'anon' 'public' key (Click Copy icon, do NOT copy masked bullets).
+          </span>
+        </div>
+
+        <div class="modal-upload-error-banner" id="adminConfigAlert" style="display: none; margin-bottom: 14px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+          <span id="adminConfigAlertText"></span>
+        </div>
+
+        <div class="modal-form-actions">
+          <button type="button" class="btn btn-outline" id="testCloudConnectionBtn">Test Connection</button>
+          <button type="submit" class="btn btn-primary" id="saveCloudConfigBtn">
+            <span>SAVE &amp; CONNECT</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Floating Toast Notifications -->
   <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Supabase Cloud Storage, Resumable TUS & Database SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/tus-js-client@3/dist/tus.min.js"></script>
-  <script src="js/supabase-config.js?v=5.3"></script>
-  <script src="js/supabase-client.js?v=5.3"></script>
+  <script src="js/supabase-config.js?v=5.4"></script>
+  <script src="js/supabase-client.js?v=5.4"></script>
 
   <!-- Application Scripts -->
-  <script src="js/projects-data.js?v=5.3"></script>
-  <script src="js/app.js?v=5.3"></script>
+  <script src="js/projects-data.js?v=5.4"></script>
+  <script src="js/app.js?v=5.4"></script>
 </body>
 </html>

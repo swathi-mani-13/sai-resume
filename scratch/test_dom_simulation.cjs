@@ -1,14 +1,17 @@
 const fs = require('fs');
 const path = require('path');
 
-console.log('=== RUNNING BEHAVIORAL SIMULATION FOR THREE-DOT MENU (V5.1) ===\n');
+console.log('=== RUNNING BEHAVIORAL SIMULATION FOR THREE-DOT MENU (V5.4) ===\n');
 
 // Mock browser environment
 let clipboardContent = '';
-let toasts = [];
+const mockDatabase = [];
+const mockStorageBucket = new Map();
 
 global.window = {
   SUPABASE_CONFIG: {
+    url: 'https://mock-production.supabase.co',
+    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.mockvalidactualjwttokenhere12345.sig1234567890',
     bucketName: 'portfolio-videos',
     tableName: 'portfolio_videos'
   },
@@ -18,15 +21,109 @@ global.window = {
     setItem(k, v) { this.data[k] = String(v); },
     removeItem(k) { delete this.data[k]; }
   },
-  navigator: {
-    clipboard: {
-      async writeText(txt) {
-        clipboardContent = txt;
-        return true;
-      }
+  supabase: {
+    createClient(url, key) {
+      return {
+        auth: {
+          async getSession() {
+            return { data: { session: null } };
+          }
+        },
+        from(table) {
+          return {
+            select(cols) {
+              const queryObj = {
+                filters: [],
+                order() { return this; },
+                range() { return this; },
+                limit(n) { return this; },
+                eq(col, val) {
+                  this.filters.push({ col, val });
+                  return this;
+                },
+                async maybeSingle() {
+                  const res = await this.execute();
+                  return { data: res.data && res.data[0] ? res.data[0] : null, error: null };
+                },
+                async execute() {
+                  let results = [...mockDatabase];
+                  for (const f of this.filters) {
+                    results = results.filter(r => r[f.col] === f.val);
+                  }
+                  return { data: results, error: null };
+                },
+                then(resolve, reject) {
+                  return this.execute().then(resolve, reject);
+                }
+              };
+              return queryObj;
+            },
+            insert(rows) {
+              return {
+                select() {
+                  const inserted = [];
+                  for (const r of rows) {
+                    const row = { id: `pg_${Date.now()}`, ...r };
+                    mockDatabase.push(row);
+                    inserted.push(row);
+                  }
+                  return Promise.resolve({ data: inserted, error: null });
+                }
+              };
+            },
+            update(fields) {
+              return {
+                eq(col, val) {
+                  return {
+                    select() {
+                      const updated = [];
+                      for (let i = 0; i < mockDatabase.length; i++) {
+                        if (mockDatabase[i][col] === val) {
+                          mockDatabase[i] = { ...mockDatabase[i], ...fields };
+                          updated.push(mockDatabase[i]);
+                        }
+                      }
+                      return Promise.resolve({ data: updated, error: null });
+                    }
+                  };
+                }
+              };
+            },
+            delete() {
+              return {
+                eq(col, val) {
+                  for (let i = mockDatabase.length - 1; i >= 0; i--) {
+                    if (mockDatabase[i][col] === val) {
+                      mockDatabase.splice(i, 1);
+                    }
+                  }
+                  return Promise.resolve({ data: null, error: null });
+                }
+              };
+            }
+          };
+        },
+        storage: {
+          from(bucket) {
+            return {
+              remove(paths) {
+                paths.forEach(p => mockStorageBucket.delete(p));
+                return Promise.resolve({ data: paths, error: null });
+              },
+              getPublicUrl(path) {
+                return { data: { publicUrl: `https://mock-production.supabase.co/storage/v1/object/public/${bucket}/${path}` } };
+              },
+              list() {
+                return Promise.resolve({ data: [], error: null });
+              }
+            };
+          }
+        }
+      };
     }
   }
 };
+
 Object.defineProperty(global, 'localStorage', {
   value: global.window.localStorage,
   writable: true,
@@ -61,6 +158,8 @@ eval(`
 const api = testContext();
 
 (async () => {
+  await api.init();
+
   // 1. Upload sample video
   console.log('Step 1: Adding a video to persistence store...');
   const sample = await api.saveMetadata({
@@ -68,7 +167,7 @@ const api = testContext();
     category: 'Automotive Edit',
     tags: '#Porsche #GT3RS #TrackDay',
     description: 'Raw exhaust sound and 4K track footage.',
-    videoUrl: 'https://example-supabase.co/storage/v1/object/public/portfolio-videos/videos/porsche.mp4',
+    videoUrl: 'https://mock-production.supabase.co/storage/v1/object/public/portfolio-videos/videos/porsche.mp4',
     storagePath: 'videos/porsche.mp4'
   });
 
