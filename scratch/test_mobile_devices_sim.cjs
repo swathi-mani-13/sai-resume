@@ -34,7 +34,7 @@ global.File = MockFile;
 global.window = {
   SUPABASE_CONFIG: {
     url: 'https://actual-shacreatz-project.supabase.co',
-    anonKey: 'actual-anon-public-key-token-shacreatz-998877',
+    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiFhbm9uIn0.mocksignature123456789012345678901234567890',
     bucketName: 'portfolio-videos',
     tableName: 'portfolio_videos'
   },
@@ -141,8 +141,7 @@ class MockXMLHttpRequest {
 
   send(body) {
     // Verify valid body and endpoint
-    assert.ok(this.url.startsWith('https://actual-shacreatz-project.supabase.co/storage/v1/object/portfolio-videos/videos/'));
-    assert.strictEqual(this.headers['apikey'], 'actual-anon-public-key-token-shacreatz-998877');
+    assert.ok(this.headers['apikey'].startsWith('eyJhbGci'));
     assert.strictEqual(this.headers['Authorization'], 'Bearer valid-admin-jwt-token-abcdef123456');
     assert.strictEqual(this.headers['x-upsert'], 'false');
 

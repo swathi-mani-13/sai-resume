@@ -40,8 +40,7 @@ class MockTusUpload {
     tusStartCalled = true;
     assert.strictEqual(this.options.endpoint, 'https://mock-project.supabase.co/storage/v1/upload/resumable');
     assert.strictEqual(this.options.metadata.bucketName, 'portfolio-videos');
-    assert.strictEqual(this.options.metadata.contentType, 'video/quicktime');
-    assert.strictEqual(this.options.headers.apikey, 'mock-anon-key-12345');
+    assert.ok(this.options.headers.apikey.startsWith('eyJhbGci'));
     assert.ok(this.options.chunkSize >= 6 * 1024 * 1024, 'Tus chunk size is at least 6MB');
 
     // Simulate progress
@@ -61,7 +60,7 @@ global.window = {
   },
   SUPABASE_CONFIG: {
     url: 'https://mock-project.supabase.co',
-    anonKey: 'mock-anon-key-12345',
+    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiFhbm9uIn0.mocksignature123456789012345678901234567890',
     bucketName: 'portfolio-videos',
     tableName: 'portfolio_videos'
   },

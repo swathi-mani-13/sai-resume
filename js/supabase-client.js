@@ -287,8 +287,26 @@
   }
 
   /* --------------------------------------------------------------------------
-     4. SUPABASE INITIALIZATION
+     4. SUPABASE INITIALIZATION & RUNTIME CREDENTIAL VALIDATION
      -------------------------------------------------------------------------- */
+  function isValidJwtKey(key) {
+    if (!key || typeof key !== 'string') return false;
+    // Must be valid ASCII (no non-ISO-8859-1 code points like bullets \u2022)
+    if (/[^\x20-\x7E]/.test(key) || key.includes('•') || key.includes('\u2022')) return false;
+    // Must be standard JWT: starts with 'ey' and has 3 segments separated by dots
+    const parts = key.trim().split('.');
+    if (parts.length !== 3 || !parts[0].startsWith('ey')) return false;
+    return key.length >= 50;
+  }
+
+  function isValidProjectUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    const trimmed = url.trim().toLowerCase();
+    if (!trimmed.startsWith('https://')) return false;
+    if (trimmed.includes('your-project-id') || trimmed.includes('placeholder')) return false;
+    return true;
+  }
+
   async function initSupabase() {
     if (supabaseClient) return supabaseClient;
     if (initPromise) return initPromise;
@@ -311,7 +329,10 @@
           const res = await fetch('/api/config');
           if (res.ok) {
             const data = await res.json();
-            if (data.supabaseUrl && data.supabaseAnonKey) {
+            if (data.diagnostic && data.diagnostic.status === 'CONFIGURATION_ERROR') {
+              console.warn('[SHACREATZ DIAGNOSTIC 2/6: SUPABASE CLIENT INIT] Vercel environment variable notice:', data.diagnostic.message);
+            }
+            if (data.isConfigured && data.supabaseUrl && data.supabaseAnonKey) {
               url = data.supabaseUrl;
               anonKey = data.supabaseAnonKey;
             }
@@ -324,6 +345,21 @@
       // Sanitize URL and Key against non-ISO-8859-1 code points
       url = sanitizeAsciiHeaderValue(url).replace(/\/+$/, '');
       anonKey = sanitizeAsciiHeaderValue(anonKey);
+
+      // Validate credentials before attempting to create client
+      const keyValid = isValidJwtKey(anonKey);
+      const urlValid = isValidProjectUrl(url);
+
+      if (!keyValid || !urlValid) {
+        if (anonKey && !keyValid) {
+          console.warn('[SHACREATZ DIAGNOSTIC 2/6: SUPABASE CLIENT INIT] SUPABASE_ANON_KEY is invalid or contains masked bullet characters (••••••••). Running in seamless local storage mode.');
+        }
+        if (url && !urlValid) {
+          console.warn('[SHACREATZ DIAGNOSTIC 2/6: SUPABASE CLIENT INIT] SUPABASE_URL is invalid or placeholder. Running in seamless local storage mode.');
+        }
+        url = '';
+        anonKey = '';
+      }
 
       // CRITICAL: Synchronize back to window.SUPABASE_CONFIG so all functions have active access
       if (window.SUPABASE_CONFIG) {
@@ -348,7 +384,7 @@
           console.error('[SHACREATZ DIAGNOSTIC 2/6: SUPABASE CLIENT INIT] Failed to initialize client:', err.message);
         }
       } else {
-        console.log('[SHACREATZ DIAGNOSTIC 2/6: SUPABASE CLIENT INIT] Supabase credentials not found or offline. Seamless local storage adapter active.');
+        console.log('[SHACREATZ DIAGNOSTIC 2/6: SUPABASE CLIENT INIT] Supabase credentials not found or invalid. Seamless local persistence adapter active.');
       }
 
       return supabaseClient;
@@ -518,20 +554,21 @@
 
     // Helper to classify upload errors accurately
     function classifyStorageError(status, message, rawText) {
+      const redactedUrl = url ? url.replace(/(https?:\/\/)([^.]+)(\..*)/, '$1***$3') : 'cloud storage';
       if (status === 0 || !status) {
-        return new Error('Network or CORS preflight error: Mobile browser could not connect to Supabase Storage. Check network connection and CORS headers.');
+        return new Error(`Connection error: Could not reach Supabase Storage at ${redactedUrl}. Please check your network connection and verify that your Supabase project is active (not paused in Supabase Dashboard).`);
       }
       if (status === 401) {
-        return new Error('Authentication expired or invalid credentials (HTTP 401). Please check Supabase anon key.');
+        return new Error('Authentication failed (HTTP 401): Please verify that SUPABASE_ANON_KEY in Vercel is set to the full anon JWT key from Supabase Dashboard -> Project Settings -> API.');
       }
       if (status === 403) {
-        return new Error(`Storage permission denied (HTTP 403): Storage bucket '${BUCKET_NAME}' policy does not permit public upload. Please check Storage RLS policies.`);
+        return new Error(`Storage permission denied (HTTP 403): Storage bucket '${BUCKET_NAME}' policy does not permit upload. Please run supabase_setup.sql in your Supabase SQL editor.`);
       }
       if (status === 413) {
         return new Error('File too large (HTTP 413): The video file exceeds the maximum upload limit set in Supabase Storage.');
       }
       if (status === 504 || (message && message.includes('timed out'))) {
-        return new Error('Upload timed out on slow mobile connection. Please check your signal strength and try again.');
+        return new Error('Upload timed out on slow connection. Please check your signal strength and try again.');
       }
       return new Error(`Storage upload failed (HTTP ${status}): ${message || rawText || 'Check storage permissions and network.'}`);
     }
@@ -745,9 +782,12 @@
       console.error('[SHACREATZ DIAGNOSTIC 5/6: STORAGE RESPONSE] Supabase SDK Upload Failed:', uploadError);
       const msg = uploadError.message || 'Storage upload error';
       if (msg.includes('row-level security') || msg.includes('policy') || msg.includes('permission')) {
-        throw new Error(`Storage permission denied: RLS policy blocked upload to '${BUCKET_NAME}'.`);
+        throw new Error(`Storage permission denied: RLS policy blocked upload to '${BUCKET_NAME}'. Please run supabase_setup.sql.`);
       } else if (msg.includes('Payload too large') || msg.includes('413')) {
         throw new Error('File too large: Video exceeds Supabase Storage file size limit.');
+      } else if (msg.includes('fetch') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        const redactedUrl = url ? url.replace(/(https?:\/\/)([^.]+)(\..*)/, '$1***$3') : 'Supabase';
+        throw new Error(`Connection error: Failed to connect to Supabase Storage at ${redactedUrl}. Please ensure your Supabase project is active (not paused in Supabase Dashboard).`);
       }
       throw uploadError;
     }

@@ -28,7 +28,7 @@ global.File = MockFile;
 global.window = {
   SUPABASE_CONFIG: {
     url: 'https://mock-project.supabase.co',
-    anonKey: 'mock-anon-key-valid-token-12345',
+    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiFhbm9uIn0.mocksignature123456789012345678901234567890',
     bucketName: 'portfolio-videos',
     tableName: 'portfolio_videos'
   },
