@@ -1379,6 +1379,30 @@ a {
   transition: width 0.2s ease;
 }
 
+/* Dedicated Mobile Upload Error Banner */
+.form-error-banner {
+  background: rgba(255, 90, 121, 0.12);
+  border: 1px solid rgba(255, 90, 121, 0.45);
+  color: #FF7B95;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  margin-top: 14px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  word-break: break-word;
+  animation: fadeInError 0.2s ease;
+}
+
+@keyframes fadeInError {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* Video Card Inaccessible / Error Badge */
 .card-video-error-badge {
   position: absolute;

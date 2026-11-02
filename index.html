@@ -23,7 +23,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Oswald:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
   <!-- Stylesheet (cache-busted for instant mobile reload) -->
-  <link rel="stylesheet" href="css/style.css?v=5.1">
+  <link rel="stylesheet" href="css/style.css?v=5.2">
 </head>
 <body>
 
@@ -635,7 +635,7 @@
             1. Choose Video <span class="required-star">*</span>
           </label>
           <div class="video-file-picker" id="videoFilePicker">
-            <input type="file" id="videoFileInput" class="file-input-hidden" accept="video/mp4,video/webm,video/quicktime,video/x-m4v,.mp4,.webm,.mov,.m4v" aria-label="Upload video file">
+            <input type="file" id="videoFileInput" class="file-input-hidden" accept="video/*,video/mp4,video/quicktime,video/webm,video/x-m4v,.mp4,.mov,.webm,.m4v" aria-label="Upload video file">
             <div class="picker-inner">
               <div class="picker-icon">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -722,6 +722,16 @@
             5. Description <span class="optional-text">(Optional)</span>
           </label>
           <textarea id="videoDescInput" class="form-control" rows="2" placeholder="Brief note about this video edit, sound design, color grading..." maxlength="250"></textarea>
+        </div>
+
+        <!-- Dedicated Mobile Upload Error Banner -->
+        <div class="form-error-banner" id="modalUploadErrorBanner" style="display: none;" role="alert">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="flex-shrink: 0;">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+          <span id="modalUploadErrorText">Upload failed.</span>
         </div>
 
         <!-- Actions -->
@@ -844,13 +854,14 @@
   <!-- Floating Toast Notifications -->
   <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
 
-  <!-- Supabase Cloud Storage & Database SDK -->
+  <!-- Supabase Cloud Storage, Resumable TUS & Database SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/supabase-config.js?v=5.1"></script>
-  <script src="js/supabase-client.js?v=5.1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tus-js-client@3/dist/tus.min.js"></script>
+  <script src="js/supabase-config.js?v=5.3"></script>
+  <script src="js/supabase-client.js?v=5.3"></script>
 
   <!-- Application Scripts -->
-  <script src="js/projects-data.js?v=5.1"></script>
-  <script src="js/app.js?v=5.1"></script>
+  <script src="js/projects-data.js?v=5.3"></script>
+  <script src="js/app.js?v=5.3"></script>
 </body>
 </html>

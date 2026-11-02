@@ -44,6 +44,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const videoDescInput = document.getElementById('videoDescInput');
   const fileErrorMsg = document.getElementById('fileErrorMsg');
   const captionErrorMsg = document.getElementById('captionErrorMsg');
+  const modalUploadErrorBanner = document.getElementById('modalUploadErrorBanner');
+  const modalUploadErrorText = document.getElementById('modalUploadErrorText');
 
   // Upload Progress Elements
   const uploadProgressWrapper = document.getElementById('uploadProgressWrapper');
@@ -82,13 +84,14 @@ document.addEventListener('DOMContentLoaded', () => {
   // Toast Container
   const toastContainer = document.getElementById('toastContainer');
 
-  // Supported video formats
-  const SUPPORTED_EXTENSIONS = ['mp4', 'webm', 'mov', 'm4v'];
-  const SUPPORTED_MIME_PREFIXES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v'];
+  // Supported video formats & mobile MIME types
+  const SUPPORTED_EXTENSIONS = ['mp4', 'webm', 'mov', 'm4v', '3gp', 'qt', 'ogv', 'mkv'];
+  const SUPPORTED_MIME_PREFIXES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v', 'video/3gpp', 'video/3gpp2', 'video/ogg', 'video/'];
 
-  // In-memory state for user added videos & active player tracking
+  // In-memory state for user added videos, active player tracking & upload mutex
   let currentPreviewBlobUrl = null;
   let currentSelectedFile = null;
+  let isUploading = false;
   const allActiveVideoElements = [];
 
   /* --------------------------------------------------------------------------
@@ -150,24 +153,49 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function isValidVideoFile(file) {
-    if (!file) return false;
-    const ext = (file.name.split('.').pop() || '').toLowerCase();
-    const type = file.type || '';
+    if (!file || typeof file.size !== 'number' || file.size <= 0) return false;
+    const parts = (file.name || '').split('.');
+    const ext = parts.length > 1 ? parts.pop().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+    const type = (file.type || '').toLowerCase().trim();
+
+    // 1. Check known video extensions
     const hasValidExt = SUPPORTED_EXTENSIONS.includes(ext);
-    const hasValidMime = SUPPORTED_MIME_PREFIXES.some((prefix) => type.startsWith(prefix));
-    return hasValidExt || hasValidMime;
+
+    // 2. Check standard video MIME prefixes
+    const hasValidMime = type.startsWith('video/') || SUPPORTED_MIME_PREFIXES.some((prefix) => type.startsWith(prefix));
+
+    // Valid if standard extension OR standard video MIME type
+    if (hasValidExt || hasValidMime) return true;
+
+    // 3. Handle generic mobile MIME types (application/octet-stream or empty) if extension matches
+    if ((!type || type === 'application/octet-stream' || type === 'binary/octet-stream') && hasValidExt) {
+      return true;
+    }
+
+    // 4. Mobile camera roll / content URI fallback (e.g. Android VID_20261101_172030 or 1000087683 without extension)
+    // When picked through video file input, if extension is absent or unusual and MIME is generic, accept as valid video
+    if ((!type || type === 'application/octet-stream' || type === 'binary/octet-stream') && (!ext || ext.length > 5 || !isNaN(Number(ext)))) {
+      return true;
+    }
+
+    return false;
   }
 
   function getNormalizedMimeType(file) {
+    if (window.ShacreatzSupabase && typeof window.ShacreatzSupabase.getSafeMimeType === 'function') {
+      return window.ShacreatzSupabase.getSafeMimeType(file);
+    }
     const ext = (file.name.split('.').pop() || '').toLowerCase();
     if (file.type && file.type.startsWith('video/')) {
       return file.type;
     }
     switch (ext) {
       case 'webm': return 'video/webm';
-      case 'mov': return 'video/quicktime';
-      case 'mp4': return 'video/mp4';
+      case 'mov':
+      case 'qt': return 'video/quicktime';
       case 'm4v': return 'video/x-m4v';
+      case '3gp': return 'video/3gpp';
+      case 'mp4':
       default: return 'video/mp4';
     }
   }
@@ -642,6 +670,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function resetForm() {
     if (addVideoForm) addVideoForm.reset();
     currentSelectedFile = null;
+    isUploading = false;
 
     if (currentPreviewBlobUrl) {
       try {
@@ -661,6 +690,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (videoPreviewWrapper) videoPreviewWrapper.style.display = 'none';
     if (uploadProgressWrapper) uploadProgressWrapper.style.display = 'none';
     if (videoErrorAlert) videoErrorAlert.style.display = 'none';
+    if (modalUploadErrorBanner) modalUploadErrorBanner.style.display = 'none';
     if (filePickerPrompt) filePickerPrompt.textContent = 'Click or drag & drop video here';
     if (filePickerNote) filePickerNote.textContent = 'Supports MP4, WebM, MOV, M4V';
     if (fileErrorMsg) fileErrorMsg.style.display = 'none';
@@ -674,10 +704,28 @@ document.addEventListener('DOMContentLoaded', () => {
   function handleFileSelected(file) {
     if (!file) return;
 
-    if (!isValidVideoFile(file)) {
+    const parts = (file.name || '').split('.');
+    const ext = parts.length > 1 ? parts.pop().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+    const isValid = isValidVideoFile(file);
+
+    // STAGE 1 DIAGNOSTIC LOG IMMEDIATELY UPON SELECTION (Requirement 1)
+    console.log('[SHACREATZ DIAGNOSTIC 1/6: FILE SELECTION]', {
+      fileName: file.name,
+      fileType: file.type || '(empty / unknown by mobile browser)',
+      fileSizeBytes: file.size,
+      fileSizeMB: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
+      fileExtension: ext || '(none)',
+      isValidFile: isValid,
+      hasBlobInstance: file instanceof Blob
+    });
+
+    if (modalUploadErrorBanner) modalUploadErrorBanner.style.display = 'none';
+
+    if (!isValid) {
       if (fileErrorMsg) {
-        fileErrorMsg.textContent = 'Please select a valid video format (MP4, WebM, MOV, or M4V).';
+        fileErrorMsg.textContent = 'Unsupported video format. Please select an MP4, MOV, WebM, or M4V video.';
         fileErrorMsg.style.display = 'block';
+        fileErrorMsg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
       return;
     }
@@ -709,6 +757,11 @@ document.addEventListener('DOMContentLoaded', () => {
       videoPreviewWrapper.style.display = 'block';
       if (previewDurationBadge) previewDurationBadge.textContent = 'Loading...';
 
+      // Clear previous sources to prevent accumulating tags in DOM
+      while (modalVideoPreview.firstChild) {
+        modalVideoPreview.removeChild(modalVideoPreview.firstChild);
+      }
+
       modalVideoPreview.pause();
       modalVideoPreview.src = currentPreviewBlobUrl;
 
@@ -728,7 +781,7 @@ document.addEventListener('DOMContentLoaded', () => {
       modalVideoPreview.onerror = () => {
         if (videoErrorAlert) {
           videoErrorAlert.style.display = 'flex';
-          if (videoErrorAlertText) videoErrorAlertText.textContent = 'Preview notice: Browser format codec decoder unavailable.';
+          if (videoErrorAlertText) videoErrorAlertText.textContent = 'Preview notice: Browser codec decoder unavailable on this device. (Video will still upload and play on supported devices)';
         }
       };
 
@@ -999,43 +1052,63 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   /* --------------------------------------------------------------------------
-     10. FORM SUBMISSION (DIRECT FILE UPLOAD TO SUPABASE & NO LOCALHOST PROMPT)
+     10. FORM SUBMISSION (DIRECT MOBILE FILE UPLOAD TO SUPABASE & DETAILED ERRORS)
      -------------------------------------------------------------------------- */
   if (addVideoForm) {
     addVideoForm.addEventListener('submit', async (e) => {
       e.preventDefault();
 
+      // Prevent duplicate upload requests (Requirement 4)
+      if (isUploading) {
+        console.warn('[SHACREATZ UPLOAD TRACE] Upload already in progress. Ignoring duplicate request.');
+        return;
+      }
+
       let hasError = false;
-      const file = currentSelectedFile || (videoFileInput.files && videoFileInput.files[0]);
+      const file = currentSelectedFile || (videoFileInput && videoFileInput.files && videoFileInput.files[0]);
       const caption = videoCaptionInput ? videoCaptionInput.value.trim() : '';
       const category = videoCategoryInput ? videoCategoryInput.value.trim() : '';
       const tags = videoTagsInput ? videoTagsInput.value.trim() : '';
       const description = videoDescInput ? videoDescInput.value.trim() : '';
 
+      // Reset previous error indicators
+      if (modalUploadErrorBanner) modalUploadErrorBanner.style.display = 'none';
+      if (fileErrorMsg) fileErrorMsg.style.display = 'none';
+      if (captionErrorMsg) captionErrorMsg.style.display = 'none';
+
       if (!file) {
         if (fileErrorMsg) {
-          fileErrorMsg.textContent = 'Please select a video file from your computer.';
+          fileErrorMsg.textContent = 'Please select a video file to upload.';
           fileErrorMsg.style.display = 'block';
+          fileErrorMsg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
         hasError = true;
       } else if (!isValidVideoFile(file)) {
         if (fileErrorMsg) {
-          fileErrorMsg.textContent = 'Please select a valid video format (MP4, WebM, MOV, or M4V).';
+          fileErrorMsg.textContent = 'Unsupported video format. Please select an MP4, MOV, WebM, or M4V video.';
           fileErrorMsg.style.display = 'block';
+          fileErrorMsg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
         hasError = true;
-      } else {
-        if (fileErrorMsg) fileErrorMsg.style.display = 'none';
       }
 
       if (!caption) {
         if (captionErrorMsg) captionErrorMsg.style.display = 'block';
         hasError = true;
-      } else {
-        if (captionErrorMsg) captionErrorMsg.style.display = 'none';
       }
 
       if (hasError) return;
+
+      // Verify that the File object reached the upload function (Requirement 1 & 3)
+      console.log('[SHACREATZ DIAGNOSTIC 1/6: FILE REACHED PIPELINE]', {
+        name: file.name,
+        type: file.type || '(empty / unspecified by mobile browser)',
+        sizeBytes: file.size,
+        sizeMB: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
+        caption: caption
+      });
+
+      isUploading = true;
 
       // Show uploading state on button & progress bar
       if (submitAddVideoBtn) {
@@ -1057,33 +1130,46 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (uploadProgressWrapper) {
         uploadProgressWrapper.style.display = 'block';
-        if (uploadProgressFill) uploadProgressFill.style.width = '10%';
-        if (uploadProgressPct) uploadProgressPct.textContent = '10%';
-        if (uploadProgressLabel) uploadProgressLabel.textContent = 'Uploading to cloud storage...';
+        if (uploadProgressFill) uploadProgressFill.style.width = '8%';
+        if (uploadProgressPct) uploadProgressPct.textContent = '8%';
+        if (uploadProgressLabel) uploadProgressLabel.textContent = 'Initiating cloud upload stream...';
       }
 
+      let uploadResult = null;
       try {
-        // 1. Upload video file to Supabase Cloud Storage
-        const uploadResult = await window.ShacreatzSupabase.uploadVideo(file, (pct, msg) => {
+        // 1. Upload actual selected video file to Supabase Cloud Storage (with ASCII-safe filename & real progress)
+        uploadResult = await window.ShacreatzSupabase.uploadVideo(file, (pct, msg) => {
           if (uploadProgressFill) uploadProgressFill.style.width = `${pct}%`;
           if (uploadProgressPct) uploadProgressPct.textContent = `${pct}%`;
           if (uploadProgressLabel && msg) uploadProgressLabel.textContent = msg;
         });
 
         // 2. Save video metadata to Supabase PostgreSQL Database
-        const dbRecord = await window.ShacreatzSupabase.saveMetadata({
-          title: caption,
-          category: category || 'Uploaded Video',
-          tags: tags,
-          description: description,
-          videoUrl: uploadResult.publicUrl,
-          fileName: file.name,
-          mimeType: getNormalizedMimeType(file),
-          fileSize: file.size,
-          storagePath: uploadResult.storagePath,
-          isLocalBlob: uploadResult.isLocalBlob,
-          fileBlob: uploadResult.fileBlob
-        });
+        let dbRecord;
+        try {
+          dbRecord = await window.ShacreatzSupabase.saveMetadata({
+            title: caption,
+            category: category || 'Uploaded Video',
+            tags: tags,
+            description: description,
+            videoUrl: uploadResult.publicUrl,
+            fileName: file.name, // Preserves original full-Unicode filename in DB
+            mimeType: uploadResult.mimeType || getNormalizedMimeType(file),
+            fileSize: file.size,
+            storagePath: uploadResult.storagePath,
+            isLocalBlob: uploadResult.isLocalBlob,
+            fileBlob: uploadResult.fileBlob
+          });
+        } catch (dbErr) {
+          // SAFE CLEANUP: If database insertion fails after storage upload,
+          // remove the uploaded storage file to prevent orphaned objects! (Requirement 4)
+          console.error('[DB Insert Failed - Cleaning up storage object]', dbErr);
+          if (uploadResult && uploadResult.storagePath && !uploadResult.isLocalBlob) {
+            await window.ShacreatzSupabase.deleteVideo(null, uploadResult.storagePath).catch(() => {});
+          }
+          const detailedMsg = 'Storage upload succeeded, but database insertion failed: ' + (dbErr.message || 'Check database connection.');
+          throw new Error(detailedMsg);
+        }
 
         if (portfolioEmptyState) {
           portfolioEmptyState.style.display = 'none';
@@ -1102,13 +1188,26 @@ document.addEventListener('DOMContentLoaded', () => {
           card.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }, 200);
       } catch (uploadErr) {
-        console.error('[Upload Failed]', uploadErr);
+        console.error('[Upload Pipeline Failed]', uploadErr);
+        const errorReason = uploadErr.message || 'Upload failed. Please check your connection.';
+
+        // Display actual failure reason in admin interface (Requirement 5)
         if (fileErrorMsg) {
-          fileErrorMsg.textContent = 'Upload error: ' + (uploadErr.message || 'Please check your connection.');
+          fileErrorMsg.textContent = errorReason;
           fileErrorMsg.style.display = 'block';
+          fileErrorMsg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
-        showToast('Upload failed: ' + (uploadErr.message || 'Error occurred'), 'error');
+
+        if (modalUploadErrorBanner) {
+          modalUploadErrorBanner.style.display = 'flex';
+          if (modalUploadErrorText) {
+            modalUploadErrorText.textContent = errorReason;
+          }
+        }
+
+        showToast(errorReason, 'error');
       } finally {
+        isUploading = false;
         if (uploadProgressWrapper) {
           setTimeout(() => {
             uploadProgressWrapper.style.display = 'none';

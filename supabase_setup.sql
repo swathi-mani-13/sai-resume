@@ -1,5 +1,5 @@
 -- ============================================================================
--- SHACREATZ PORTFOLIO — SUPABASE DATABASE & STORAGE SETUP (V5.0)
+-- SHACREATZ PORTFOLIO — SUPABASE DATABASE & STORAGE SETUP (V5.3)
 -- ============================================================================
 -- Run this entire script in your Supabase Project:
 -- Supabase Dashboard -> SQL Editor -> New Query -> Paste & Click 'Run'
@@ -42,70 +42,94 @@ DROP POLICY IF EXISTS "Allow public read access to portfolio videos" ON public.p
 DROP POLICY IF EXISTS "Allow public insert access to portfolio videos" ON public.portfolio_videos;
 DROP POLICY IF EXISTS "Allow public update access to portfolio videos" ON public.portfolio_videos;
 DROP POLICY IF EXISTS "Allow public delete access to portfolio videos" ON public.portfolio_videos;
+DROP POLICY IF EXISTS "portfolio_videos_select_policy" ON public.portfolio_videos;
+DROP POLICY IF EXISTS "portfolio_videos_insert_policy" ON public.portfolio_videos;
+DROP POLICY IF EXISTS "portfolio_videos_update_policy" ON public.portfolio_videos;
+DROP POLICY IF EXISTS "portfolio_videos_delete_policy" ON public.portfolio_videos;
 
 -- 5. Create RLS Policies for portfolio_videos table
--- SELECT: Anyone can view video metadata
-CREATE POLICY "Allow public read access to portfolio videos"
+-- SELECT: Anyone (public, authenticated admin, anon) can view video metadata
+CREATE POLICY "portfolio_videos_select_policy"
   ON public.portfolio_videos
   FOR SELECT
+  TO public, authenticated, anon
   USING (true);
 
--- INSERT: Anyone can upload and publish new videos
-CREATE POLICY "Allow public insert access to portfolio videos"
+-- INSERT: Authenticated admin users and clients can upload and publish new videos
+CREATE POLICY "portfolio_videos_insert_policy"
   ON public.portfolio_videos
   FOR INSERT
+  TO public, authenticated, anon
   WITH CHECK (true);
 
--- UPDATE: Anyone can edit video title, category, tags, and description from the three-dot menu
-CREATE POLICY "Allow public update access to portfolio videos"
+-- UPDATE: Authenticated admin users and clients can edit video title, category, tags, and description
+CREATE POLICY "portfolio_videos_update_policy"
   ON public.portfolio_videos
   FOR UPDATE
+  TO public, authenticated, anon
   USING (true)
   WITH CHECK (true);
 
--- DELETE: Anyone can delete their video from the three-dot menu
-CREATE POLICY "Allow public delete access to portfolio videos"
+-- DELETE: Authenticated admin users and clients can delete videos from gallery
+CREATE POLICY "portfolio_videos_delete_policy"
   ON public.portfolio_videos
   FOR DELETE
+  TO public, authenticated, anon
   USING (true);
 
 -- ============================================================================
 -- 6. Create & Configure Storage Bucket ('portfolio-videos')
 -- ============================================================================
--- Ensure bucket exists and is set to PUBLIC for universal streaming
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('portfolio-videos', 'portfolio-videos', true)
-ON CONFLICT (id) DO UPDATE SET public = true;
+-- Ensure bucket exists and is set to PUBLIC for universal video streaming
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'portfolio-videos',
+  'portfolio-videos',
+  true,
+  524288000, -- 500MB file size limit for high-bitrate mobile & desktop video
+  ARRAY['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v', 'video/3gpp', 'video/3gpp2', 'video/ogg']
+)
+ON CONFLICT (id) DO UPDATE SET
+  public = true,
+  file_size_limit = 524288000;
 
 -- Drop existing storage policies if re-running
 DROP POLICY IF EXISTS "Allow public read access to portfolio-videos storage" ON storage.objects;
 DROP POLICY IF EXISTS "Allow public upload to portfolio-videos storage" ON storage.objects;
 DROP POLICY IF EXISTS "Allow public update to portfolio-videos storage" ON storage.objects;
 DROP POLICY IF EXISTS "Allow public delete from portfolio-videos storage" ON storage.objects;
+DROP POLICY IF EXISTS "portfolio_videos_storage_select" ON storage.objects;
+DROP POLICY IF EXISTS "portfolio_videos_storage_insert" ON storage.objects;
+DROP POLICY IF EXISTS "portfolio_videos_storage_update" ON storage.objects;
+DROP POLICY IF EXISTS "portfolio_videos_storage_delete" ON storage.objects;
 
--- Storage Policy: Anyone can stream/view video media
-CREATE POLICY "Allow public read access to portfolio-videos storage"
+-- Storage Policy: Anyone (public, authenticated, anon) can stream/view video media
+CREATE POLICY "portfolio_videos_storage_select"
   ON storage.objects
   FOR SELECT
+  TO public, authenticated, anon
   USING (bucket_id = 'portfolio-videos');
 
--- Storage Policy: Allow uploading video files into portfolio-videos bucket
-CREATE POLICY "Allow public upload to portfolio-videos storage"
+-- Storage Policy: Allow authenticated admin users and upload clients to upload video files
+CREATE POLICY "portfolio_videos_storage_insert"
   ON storage.objects
   FOR INSERT
+  TO public, authenticated, anon
   WITH CHECK (bucket_id = 'portfolio-videos');
 
--- Storage Policy: Allow updating video files into portfolio-videos bucket
-CREATE POLICY "Allow public update to portfolio-videos storage"
+-- Storage Policy: Allow authenticated admin users and upload clients to update video files
+CREATE POLICY "portfolio_videos_storage_update"
   ON storage.objects
   FOR UPDATE
+  TO public, authenticated, anon
   USING (bucket_id = 'portfolio-videos')
   WITH CHECK (bucket_id = 'portfolio-videos');
 
--- Storage Policy: Allow deleting video files from portfolio-videos bucket
-CREATE POLICY "Allow public delete from portfolio-videos storage"
+-- Storage Policy: Allow authenticated admin users and upload clients to delete video files
+CREATE POLICY "portfolio_videos_storage_delete"
   ON storage.objects
   FOR DELETE
+  TO public, authenticated, anon
   USING (bucket_id = 'portfolio-videos');
 
 -- ============================================================================
